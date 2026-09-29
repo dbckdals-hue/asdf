@@ -81,6 +81,18 @@ function writePretty2Events(itemName, fileLabel, events) {
         t=cut(t,'        // [신규][2026-09-14][철회판정 안정성게이트용 봉값 추적]','        var calc = new SignalCalculator();\n','        // [삭제][2026-09-29] 봉캐시 갱신/저장 블록 제거\n','#7 block')
         t=cut(t,'        // [신규][2026-09-14] 봉캐시(barHistoryCache)도 완전초기화 대상에 포함','        for (var wi = 0; wi < EXCEL_SHARD_COUNT; wi++) {','','#7 reset')
         assert 'barHistoryCache' not in t.replace('barHistoryCache) 전체 제거','') , 'leftover barHistoryCache'
+    else:
+        # ---- 분봉 WARM 판정 결과(카운터/상태/커서 변경)도 틱봉처럼 저장대상으로 표시
+        t=rep(t,'''                    var rResult = resolveHistorically(rsig, bars);
+                    if (!rResult) return false;''',
+'''                    var _b4 = rsig.state + "|" + (rsig.barsElapsedSinceRegistration || 0) + "|" + (rsig.stateHistory ? rsig.stateHistory.length : 0) + "|" + rsig.lastAppliedBarEpoch + "|" + rsig.lastJudgedBarEpoch;
+                    var rResult = resolveHistorically(rsig, bars);
+                    if (!rResult) {
+                        // [수정][2026-09-29] 워밍업 재판정이 카운터/상태/커서를 바꿨는데 저장대상 표시가 없어 재시작시 옛 값으로 복원되던 것 수정(틱봉과 동일)
+                        var _af = rsig.state + "|" + (rsig.barsElapsedSinceRegistration || 0) + "|" + (rsig.stateHistory ? rsig.stateHistory.length : 0) + "|" + rsig.lastAppliedBarEpoch + "|" + rsig.lastJudgedBarEpoch;
+                        if (_af !== _b4) { pendingStateDirty = true; excelMarkDirty(rsig); }
+                        return false;
+                    }''',1,'#min warm dirty')
     return t
 for name,tick in (('tick',True),('min',False)):
     src=open(f'orig/{name}.js',encoding='utf-8').read()

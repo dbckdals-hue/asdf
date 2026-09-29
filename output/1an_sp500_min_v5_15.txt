@@ -4,6 +4,7 @@
 //   (1)PRETTY2_CONFIRMED 중복기록 방지(pretty2Written) - 워밍업 재생이 매 순환마다 같은 줄을 다시 쓰던 것 제거.
 //   (2)게이트 닫힘 구간의 눌림<->대기 왕복 이력 기록 제거(눌림확인은 신호당 첫 1회만, sig._pullbackLogged) - 상태값(sig.state)/판정은 그대로.
 //   (3)Excel 저장 표시(excelMarkDirty)를 실제 상태/이력/카운터가 바뀐 신호만 표시 + 샤드 JSON 30000자 초과 경고. 저장 시점(등록/제거 2초, 하트비트 30초)은 그대로.
+//   (4)분봉 WARM 재판정이 카운터/상태/커서를 바꿔도 저장대상 표시가 없어 재시작시 옛 값으로 복원되던 것 수정(틱봉과 동일, 복원 테스트 40/40).
 // [2026-09-29][v5.14 - 근본수정 - WARM(재조회) 안전망 영구봉쇄 버그, 사용자
 //   실측지적("30558 등록 BEAR 신호가 목표가를 한참 뚫고 내려갔는데도 눌림
 //   상태로 계속 살아있다", NASDAQ100 분봉 M0016/M0017 실사례) - 상세 원인/
@@ -2513,8 +2514,14 @@ function Main_OnRcvChartEx(chartEx) {
             function (rsig) { return rsig.tf === thisFileLabel; },
             function (rsig, resolvedLines, markExplained) {
                 try {
+                    var _b4 = rsig.state + "|" + (rsig.barsElapsedSinceRegistration || 0) + "|" + (rsig.stateHistory ? rsig.stateHistory.length : 0) + "|" + rsig.lastAppliedBarEpoch + "|" + rsig.lastJudgedBarEpoch;
                     var rResult = resolveHistorically(rsig, bars);
-                    if (!rResult) return false;
+                    if (!rResult) {
+                        // [수정][2026-09-29] 워밍업 재판정이 카운터/상태/커서를 바꿨는데 저장대상 표시가 없어 재시작시 옛 값으로 복원되던 것 수정(틱봉과 동일)
+                        var _af = rsig.state + "|" + (rsig.barsElapsedSinceRegistration || 0) + "|" + (rsig.stateHistory ? rsig.stateHistory.length : 0) + "|" + rsig.lastAppliedBarEpoch + "|" + rsig.lastJudgedBarEpoch;
+                        if (_af !== _b4) { pendingStateDirty = true; excelMarkDirty(rsig); }
+                        return false;
+                    }
                     var rKindLabel = (rResult.result === "ACHIEVED") ? "STATUS_ACHIEVED" : "STATUS_INVALID";
                     if (rResult.result === "ACHIEVED") achievedCount++; else invalidCount++;
                     var rAchievedField = buildAchievedField(rsig, rResult.sdate, rResult.stime);
