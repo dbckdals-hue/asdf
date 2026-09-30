@@ -1,0 +1,151 @@
+// ================================================================================
+// [파일] NASDAQ100(NQZ26) 틱봉 워밍업 전용 (측정용) | v1.0 2026-09-30
+// 목적: 워밍업이 왜 오래 걸리는지 보려고, 봉 요청/수신/삭제만 하는 최소 스크립트.
+//   - 엑셀 저장/복원, 신호검색, 감시목록, 실시간 시세, 파일 출력 전부 없음 (화면 로그만)
+//   - 요청 개수/순서는 기존 1안 스크립트와 동일(틱봉 30~1000, 5틱 단위 195개, 요청봉수 5000/4000/2000 단계)
+//   - 응답마다 걸린 시간(ms), 수신 봉 수, 타임아웃/지각응답을 화면에 남기고 한 바퀴마다 요약을 찍음
+//   - 조정값은 아래 "조정값" 블록에서 (READ_ALL_BARS=true 로 바꾸면 기존 스크립트처럼 봉을 전부 읽는 시간까지 잼)
+// ================================================================================
+var MARKET_DATA_CODE = "NQZ26";
+var INSTRUMENT_NAME = "NASDAQ100";
+var KIND_NAME = "틱봉";
+
+function periodConst() { return CHART_PERIOD_TICK; }
+var START_CYCLE = 30, END_CYCLE = 1000;
+var TICK_TIER1_UNTIL = 500, TICK_TIER1_COUNT = 5000, TICK_TIER2_START = 600, TICK_TIER2_COUNT = 4000, TICK_TIER2_END = 700, TICK_TIER3_START = 800, TICK_TIER3_COUNT = 2000;
+function requestCount(cycle) {
+    var count;
+    if (cycle <= TICK_TIER1_UNTIL) count = TICK_TIER1_COUNT;
+    else if (cycle <= TICK_TIER2_START) count = TICK_TIER1_COUNT - Math.round((TICK_TIER1_COUNT - TICK_TIER2_COUNT) * (cycle - TICK_TIER1_UNTIL) / (TICK_TIER2_START - TICK_TIER1_UNTIL));
+    else if (cycle <= TICK_TIER2_END) count = TICK_TIER2_COUNT;
+    else if (cycle <= TICK_TIER3_START) count = TICK_TIER2_COUNT - Math.round((TICK_TIER2_COUNT - TICK_TIER3_COUNT) * (cycle - TICK_TIER2_END) / (TICK_TIER3_START - TICK_TIER2_END));
+    else count = TICK_TIER3_COUNT;
+    return Math.ceil(count / 10) * 10;
+}
+function buildTargetList() { var l = []; for (var t = START_CYCLE; t <= END_CYCLE; t += 5) l.push(t); return l; }
+
+// ---- 조정값 (측정용) ----
+var REQUEST_TIMEOUT_MS = 10000;   // 응답 대기 한계
+var REMOVE_DELAY_MS = 300;        // 응답 받은 뒤 차트객체 삭제까지 (이벤트 안에서 바로 안 지움 - 크래시 방지)
+var GAP_AFTER_REMOVE_MS = 200;    // 삭제 후 다음 요청까지 (삭제와 재요청을 서로 다른 이벤트로 분리)
+var MAX_PASSES = 2;               // 몇 바퀴 돌고 멈출지 (0 = 무한)
+var READ_ALL_BARS = false;        // true면 받은 봉의 고가/저가/날짜/시간을 전부 읽어서 시간 측정 (기존 스크립트가 하는 일)
+var USE_IND_SET = false;          // true면 기존처럼 "#주기" 지표를 같이 요청 (주기표 확인용). 기본은 봉만 요청
+
+var scriptStartMs = 0, passStartMs = 0, passNo = 0;
+var targetList = [], idx = 0;
+var waiting = false, activeSeq = 0, sentAt = 0, curCycle = 0, curCount = 0;
+var pendingRemove = [];
+var stats = null;
+
+function logMsg(m) { Main.MessageLog("[" + INSTRUMENT_NAME + " " + KIND_NAME + " 워밍업전용] " + m); }
+function fmtSec(ms) { return (ms / 1000).toFixed(1) + "초"; }
+function newStats() { return { ok: 0, timeout: 0, fail: 0, late: 0, bars: 0, sumMs: 0, maxMs: 0, maxCycle: 0, slow: [], timeouts: [], fails: [] }; }
+
+function Main_OnStart() {
+    for (var t = 1; t <= 10; t++) { try { Main.KillTimer(t); } catch (e) {} }
+    scriptStartMs = Date.now();
+    passNo = 0;
+    startPass();
+    logMsg("시작 - " + KIND_NAME + " " + targetList.length + "개 타임프레임, 최대 " + (MAX_PASSES || "무한") + "바퀴 (엑셀/신호/실시간 없음, 봉 요청만)");
+    sendNext();
+}
+
+function startPass() {
+    passNo++;
+    targetList = buildTargetList();
+    idx = 0;
+    stats = newStats();
+    passStartMs = Date.now();
+}
+
+function sendNext() {
+    if (idx >= targetList.length) { finishPass(); return; }
+    curCycle = targetList[idx];
+    curCount = requestCount(curCycle);
+    try {
+        var req = new ReqChartItem(MARKET_DATA_CODE, curCycle, periodConst(), curCount, CHART_REQCOUNT_BAR);
+        var ok;
+        if (USE_IND_SET) ok = Main.ReqChartEx(req, null, new Array(new IndicatorInfo("#주기")));
+        else ok = Main.ReqChartEx(req, null, null);
+        if (!ok) {
+            stats.fail++; stats.fails.push(curCycle);
+            logMsg("[" + (idx + 1) + "/" + targetList.length + "] " + curCycle + " 요청 실패(ReqChartEx가 false)");
+            idx++; Main.SetTimer(1, GAP_AFTER_REMOVE_MS); return;
+        }
+        activeSeq++; waiting = true; sentAt = Date.now();
+        Main.SetTimer(2, REQUEST_TIMEOUT_MS);
+    } catch (e) {
+        stats.fail++; stats.fails.push(curCycle);
+        logMsg("[" + (idx + 1) + "/" + targetList.length + "] " + curCycle + " 요청 예외: " + e.message);
+        idx++; Main.SetTimer(1, GAP_AFTER_REMOVE_MS);
+    }
+}
+
+function countBars(chartEx) {
+    function avail(i) { try { var h = chartEx.GetHigh(1, i); return !(h == null || h == undefined) && isFinite(Number(h)); } catch (e) { return false; } }
+    if (curCount <= 0) return 0;
+    if (avail(curCount - 1)) return curCount;
+    if (!avail(0)) return 0;
+    var lo = 0, hi = curCount - 1;
+    while (lo < hi) { var mid = Math.ceil((lo + hi) / 2); if (avail(mid)) lo = mid; else hi = mid - 1; }
+    return lo + 1;
+}
+
+function Main_OnRcvChartEx(chartEx) {
+    // 이 이벤트 안에서는 객체를 지우지 않고 큐에만 넣는다(삭제는 타이머 이벤트에서)
+    pendingRemove.push(chartEx);
+    if (!waiting) { stats.late++; Main.SetTimer(5, REMOVE_DELAY_MS); return; } // 타임아웃으로 이미 포기한 요청의 지각응답
+    waiting = false; Main.KillTimer(2);
+    var respMs = Date.now() - sentAt;
+    var n = countBars(chartEx);
+    var readMs = 0;
+    if (READ_ALL_BARS) {
+        var r0 = Date.now(), sink = 0;
+        for (var i = n - 1; i >= 0; i--) {
+            try { sink += Number(chartEx.GetHigh(1, i)) + Number(chartEx.GetLow(1, i)); chartEx.GetSDate(1, i); chartEx.GetSTime(1, i); } catch (e) {}
+        }
+        readMs = Date.now() - r0;
+    }
+    stats.ok++; stats.bars += n; stats.sumMs += respMs;
+    if (respMs > stats.maxMs) { stats.maxMs = respMs; stats.maxCycle = curCycle; }
+    if (respMs >= 3000) stats.slow.push(curCycle + "(" + fmtSec(respMs) + ")");
+    logMsg("[" + (idx + 1) + "/" + targetList.length + "] " + curCycle + " 응답 " + respMs + "ms, 요청 " + curCount + " / 수신 " + n + "봉" + (READ_ALL_BARS ? ", 봉읽기 " + readMs + "ms" : "") + " | 누적 " + fmtSec(Date.now() - passStartMs));
+    idx++;
+    Main.SetTimer(5, REMOVE_DELAY_MS); // 삭제 -> (GAP) -> 다음 요청
+}
+
+function finishPass() {
+    var total = Date.now() - passStartMs;
+    logMsg("★ [" + passNo + "번째 바퀴 완료] 총 " + fmtSec(total) + " | 성공 " + stats.ok + " + 타임아웃 " + stats.timeout + " + 요청실패 " + stats.fail + " = " + (stats.ok + stats.timeout + stats.fail) + " / " + targetList.length +
+        " | 받은 봉 합계 " + stats.bars + " | 응답 평균 " + (stats.ok ? Math.round(stats.sumMs / stats.ok) : 0) + "ms, 최대 " + stats.maxMs + "ms(" + stats.maxCycle + ") | 지각응답 " + stats.late + "건");
+    if (stats.timeouts.length) logMsg("   타임아웃난 프레임: " + stats.timeouts.join(", "));
+    if (stats.fails.length) logMsg("   요청실패 프레임: " + stats.fails.join(", "));
+    if (stats.slow.length) logMsg("   3초 이상 걸린 응답 " + stats.slow.length + "개: " + stats.slow.slice(0, 20).join(", ") + (stats.slow.length > 20 ? " ..." : ""));
+    if (MAX_PASSES > 0 && passNo >= MAX_PASSES) { logMsg("끝 - 스크립트 시작 후 " + fmtSec(Date.now() - scriptStartMs)); return; }
+    startPass();
+    Main.SetTimer(1, GAP_AFTER_REMOVE_MS);
+}
+
+function doRemove() {
+    var list = pendingRemove; pendingRemove = [];
+    for (var i = 0; i < list.length; i++) { try { Main.RemoveObject(list[i]); } catch (e) { logMsg("객체삭제 실패: " + e.message); } }
+}
+
+function Main_OnTimer(id) {
+    if (id == 1) { Main.KillTimer(1); sendNext(); }
+    else if (id == 2) {
+        Main.KillTimer(2);
+        if (waiting) {
+            waiting = false;
+            stats.timeout++; stats.timeouts.push(curCycle);
+            logMsg("[" + (idx + 1) + "/" + targetList.length + "] " + curCycle + " 타임아웃(" + fmtSec(REQUEST_TIMEOUT_MS) + " 응답 없음)");
+            idx++;
+            Main.SetTimer(1, GAP_AFTER_REMOVE_MS);
+        }
+    } else if (id == 5) {
+        Main.KillTimer(5);
+        doRemove();
+        if (!waiting) Main.SetTimer(1, GAP_AFTER_REMOVE_MS); // 삭제가 끝난 뒤 다음 요청은 별도 이벤트(타이머1)에서
+    }
+}
