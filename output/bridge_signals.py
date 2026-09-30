@@ -55,7 +55,7 @@
      (b)완전삭제가 (종목,타임프레임,날짜,시각)만으로 "판정 끝남"을 판단해서 같은 시각의 다른 신호(가격/종류 다름)까지
      지우던 것 수정(가격+신호종류까지 매칭). (c)STATS_IMMEDIATE가 같은 파일의 일반 신호줄과 이중집계되던 것 수정.
 
-  7. [2026-09-30 추가] GATE_COUNT_SYNC(스크립트 v5.16): 워밍업이 게이트 카운터를 차트 기준으로 맞출 때 실시간 값과 2 이상 다르면
+  7. [2026-09-30 추가] GATE_COUNT_SYNC(스크립트 v5.16/v5.17: v5.17부터 직전 동기화 이후 구간 기준): 워밍업이 게이트 카운터를 차트 기준으로 맞출 때 실시간 값과 2 이상 다르면
      남기는 진단줄. 원인 판별용 수치를 한글 문구로 조립해 대시보드 알림창에 저품질이관처럼 한 줄로 보낸다(데스크탑 알림창엔 안 띄움).
 
 [대시보드 종료 버튼과의 연동]
@@ -535,7 +535,7 @@ _GATE_SYNC_CAUSE_KR = {
     "RESEED_LOSS": "워밍업 재시작으로 실시간 봉 손실",
     "LIVE_GAP_STOP": "무틱공백으로 실시간 정지",
     "LIVE_BAR_MISSED": "실시간이 봉을 놓침(원인 미상)",
-    "COUNTER_LOW_OTHER": "실시간 봉수는 맞는데 카운터가 작음(초기값/기타)",
+    "COUNTER_LOW_OTHER": "구간 봉수는 맞는데 카운터가 작음(기타)",
     "WARM_OVERCOUNT": "워밍업이 봉을 과다 가산",
     "LIVE_OVERCOUNT": "실시간이 봉을 과다 계산",
 }
@@ -558,8 +558,13 @@ def compose_gate_sync_reason(sig_kind, live, chart, cause, detail):
     except ValueError:
         diff = 0
     s = f"{sig_kind} 실시간 {live} / 차트 {chart} (차이 {diff:+d}) | 원인: {_GATE_SYNC_CAUSE_KR.get(cause, cause)}"
-    bits = [f"실시간봉 {_gate_sync_int(kv, 'live')}/같은구간 차트봉 {_gate_sync_int(kv, 'chartLive')}",
-            f"워밍업가산 {_gate_sync_int(kv, 'warm')}", f"재시작 {_gate_sync_int(kv, 'reseed')}회"]
+    # 스크립트 v5.17: 직전 동기화 이후 구간 기준 수치(liveD/chartD). 구버전 줄(live/chartLive/warm)도 그대로 표시되게 폴백.
+    if "liveD" in kv or "chartD" in kv:
+        bits = [f"직전 동기화 이후 구간: 실시간이 센 봉 {_gate_sync_int(kv, 'liveD')} / 차트에 생긴 봉 {_gate_sync_int(kv, 'chartD')}",
+                f"재시작 {_gate_sync_int(kv, 'reseed')}회"]
+    else:
+        bits = [f"실시간봉 {_gate_sync_int(kv, 'live')}/같은구간 차트봉 {_gate_sync_int(kv, 'chartLive')}",
+                f"워밍업가산 {_gate_sync_int(kv, 'warm')}", f"재시작 {_gate_sync_int(kv, 'reseed')}회"]
     if "ticks" in kv:
         bits.append(f"수신틱 {_gate_sync_int(kv, 'ticks'):,}(차트기준 {_gate_sync_int(kv, 'expTicks'):,}) 버린틱 {_gate_sync_int(kv, 'discard'):,}")
     if "gap" in kv:
