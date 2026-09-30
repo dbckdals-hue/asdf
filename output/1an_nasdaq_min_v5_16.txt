@@ -1,5 +1,11 @@
 // ================================================================================
-// [파일] GOLD(GCZ26) 분봉(1안) | v5.15(수정시 버전+이력 필수 갱신)
+// [파일] NASDAQ100(NQZ26) 분봉(1안) | v5.16(수정시 버전+이력 필수 갱신)
+// [2026-09-30][v5.16 - 게이트 카운터 차트기준 재동기화 + 불일치 원인 진단] 판정/신호검색 로직은 변경 없음(수정 전후 회귀테스트 동일).
+//   (1)워밍업이 감시신호의 봉 카운터를 "신호 이후 차트 완결봉 수(마지막 봉 제외)"로 다시 맞춤 - 예전엔 올리기만 했고(분봉은 아예 없음),
+//      워밍업이 형성봉을 매번 더해 카운터가 부풀거나 실시간이 적게 세도 그대로 남아 게이트가 일찍/늦게 열렸음.
+//   (2)재동기화 직전 카운터(실시간 값)와 차트값이 2 이상 다르면 GATE_COUNT_SYNC 줄(신호파일+진단로그)에 원인 판별용 수치를 기록:
+//      실시간이 센 봉수/같은 구간 차트 봉수/워밍업 가산/실시간 빌더 재시작 횟수와 버려진 틱수/수신틱 대비 차트틱(틱봉)/무틱공백 정지(분봉).
+//      브릿지가 알림창용 한글 문구를 만들고 대시보드가 저품질이관처럼 한 줄로 표시한다.
 // [2026-09-29][v5.15 - 부하/파일폭증 정리 + 테스트 검증된 수정만 반영] 판정/신호검색 로직은 변경 없음(수정 전후 회귀테스트 동일).
 //   (1)PRETTY2_CONFIRMED 중복기록 방지(pretty2Written) - 워밍업 재생이 매 순환마다 같은 줄을 다시 쓰던 것 제거.
 //   (2)게이트 닫힘 구간의 눌림<->대기 왕복 이력 기록 제거(눌림확인은 신호당 첫 1회만, sig._pullbackLogged) - 상태값(sig.state)/판정은 그대로.
@@ -676,8 +682,8 @@
 //   저장키는 건드리지 않는다.
 // ================================================================================
 
-var MARKET_DATA_CODE = "GCZ26"; // [2026-09-25][v5.0] GOLD(GCZ26)에서 SP500용으로 종목코드만 교체 - 실제 예스스팟 코드로 반드시 확인 후 교체
-var INSTRUMENT_NAME = "GOLD"; // 신호파일에 찍히는 종목 표기(itemName)
+var MARKET_DATA_CODE = "NQZ26"; // [2026-09-25][v5.0] GOLD(GCZ26)에서 SP500용으로 종목코드만 교체 - 실제 예스스팟 코드로 반드시 확인 후 교체
+var INSTRUMENT_NAME = "NASDAQ100"; // 신호파일에 찍히는 종목 표기(itemName)
 var CONTRACT_SUFFIX = MARKET_DATA_CODE.slice(-3);
 var INSTRUMENT_TAG = INSTRUMENT_NAME + " " + CONTRACT_SUFFIX;
 // [제거][사용자 요청][철회기능 전체 제거] HOLD_MARGIN_THRESHOLD(_BY_INSTRUMENT) 삭제됨(사용처 없어짐)
@@ -796,7 +802,7 @@ var diagBytesWrittenApprox = 0;
 // 삭제됨 - 파일크기 제한을 실제로 검사하는 코드가 없어서 선언만 있던 상태.
 // [2026-09-07][틱봉과 동일 원칙으로 통일] 실패/예외/부정확검증만 화면에
 // 남기고 나머지 정상 운영 로그는 QUIET 처리(진단파일엔 그대로 다 남음).
-var QUIET_DIAG_TAGS = ["[DIAG][ACTUAL_COUNT]", "[DIAG][ADAPTIVE_GAP_DETECTED]", "[DIAG][CYCLE_DONE]", "[DIAG][DEDUP_PRUNE]", "[DIAG][DEGRADED_COLDSTART]", "[DIAG][REQUEST_SENT]", "[DIAG][RESOURCE]", "[DIAG][SLOW_RESPONSE]", "[DIAG][TICK_GAP]"]; // [정리][사용자 요청] REQUEST_TIMEOUT/SIGNAL_CANDIDATE/SIGNAL_CANDIDATE_REJECTED 제거(로그 자체를 없앰)
+var QUIET_DIAG_TAGS = ["[DIAG][GATE_COUNT_SYNC]", "[DIAG][ACTUAL_COUNT]", "[DIAG][ADAPTIVE_GAP_DETECTED]", "[DIAG][CYCLE_DONE]", "[DIAG][DEDUP_PRUNE]", "[DIAG][DEGRADED_COLDSTART]", "[DIAG][REQUEST_SENT]", "[DIAG][RESOURCE]", "[DIAG][SLOW_RESPONSE]", "[DIAG][TICK_GAP]"]; // [정리][사용자 요청] REQUEST_TIMEOUT/SIGNAL_CANDIDATE/SIGNAL_CANDIDATE_REJECTED 제거(로그 자체를 없앰)
 function logDiagnostic(msg, curDateStr, curTimeStr) {
     var isQuiet = false;
     for (var qi = 0; qi < QUIET_DIAG_TAGS.length; qi++) { if (msg.indexOf(QUIET_DIAG_TAGS[qi]) === 0) { isQuiet = true; break; } }
@@ -1400,6 +1406,7 @@ function processLiveBar(fileLabel, period, high, low, sdate, stime, gapBars) {
     // 자신이 채워지기 전까지는 liveCalcs[fileLabel]가 여전히 비어있음).
     if (gapBars && gapBars > 0) {
         logDiagnostic("[DIAG][LIVE_GAP_SUSPEND] label=" + fileLabel + " 무틱공백=" + gapBars + "개 캘린더분 - 실시간 신규신호검색 정지, 재조회 대기열行");
+        getLiveReseedStats(period).gap++; // [진단] 무틱공백으로 실시간 신규검색 정지한 횟수
         delete liveCalcs[fileLabel];
         recordFailureForRetry({ code: MARKET_DATA_CODE, nameEn: INSTRUMENT_NAME, cycle: period });
     }
@@ -1424,6 +1431,7 @@ function processLiveBar(fileLabel, period, high, low, sdate, stime, gapBars) {
     pendingSignals.forEach(function (s) {
         if (s.tf === fileLabel) {
             s.barsElapsedSinceRegistration = (s.barsElapsedSinceRegistration || 0) + barsAdvance;
+            s._liveBars = (s._liveBars || 0) + barsAdvance;
             s.lastAppliedBarEpoch = barEpochNow;
             // [근본수정][2026-09-26][v5.4][실시간-재워밍업 인수인계 중복이력]
             // Node.js 샌드박스 테스트로 실제 재현: 이 자리에서 lastAppliedBarEpoch
@@ -1478,6 +1486,67 @@ function logPendingRemoval(sig, reasonCode, detail) {
     } catch (e) {}
 }
 
+
+// ---------------------------------------------------------------------------------
+// [신규][2026-09-30][v5.16 게이트 카운터 차트기준 재동기화 + 불일치 원인 진단]
+// 워밍업(차트 재조회)이 감시신호의 봉 카운터를 "신호 이후 차트 완결봉 수"로 다시 맞춘다(올리기만 하던 것을
+// 내리기도 함). 마지막 봉은 형성중일 수 있어 제외(보수적: 게이트가 일찍 열리는 일은 없고 최악 1봉 늦음).
+// 재동기화 직전의 카운터(실시간이 센 값)와 차트값이 2 이상 다르면, 어디서 구멍이 났는지 가릴 수 있는 수치를
+// 함께 신호파일(GATE_COUNT_SYNC)과 진단로그에 남긴다 - 브릿지/대시보드 알림창에 한 줄로 표시된다.
+var GATE_SYNC_MIN_DIFF = 2;            // 이 이상 차이날 때만 기록(경계 1봉 흔들림은 무시)
+var GATE_SYNC_LOG_COOLDOWN_SEC = 600;  // 같은 신호는 10분에 한 번만 기록
+var liveReseedStats = {};              // 프레임 -> { n: 실시간 빌더 재시작 횟수, discarded: 버려진 부분봉 틱수(틱봉), gap: 무틱공백 정지 횟수(분봉) }
+function countRealBarsAfterEpoch(bars, epochRef) {
+    if (epochRef === undefined || epochRef === null) return 0;
+    var n = 0;
+    for (var i = 0; i < bars.length; i++) {
+        if (bars[i].filled) continue;
+        if (dateTimeToEpochApprox(String(bars[i].sdate), bars[i].stime) > epochRef) n++;
+    }
+    return n;
+}
+function getLiveReseedStats(period) { return liveReseedStats[period] || (liveReseedStats[period] = { n: 0, discarded: 0, gap: 0 }); }
+function logGateCountSync(sig, preCount, postWalk, chartCnt, completedBars) {
+    var diff = chartCnt - preCount;
+    if (Math.abs(diff) < GATE_SYNC_MIN_DIFF) return;
+    var nowEp = lastTickEpoch || Math.floor(Date.now() / 1000);
+    if (sig._syncLogEpoch !== undefined && sig._syncLogEpoch !== null && (nowEp - sig._syncLogEpoch) < GATE_SYNC_LOG_COOLDOWN_SEC) return;
+    sig._syncLogEpoch = nowEp;
+    var isTick = (sig.tf.charAt(0) === "T");
+    var rs = getLiveReseedStats(sig.period);
+    var liveBars = sig._liveBars || 0, warmAdds = sig._warmAdds || 0;
+    var reseeds = rs.n - (sig._reseedN0 || 0), discarded = rs.discarded - (sig._discard0 || 0), gaps = rs.gap - (sig._gap0 || 0);
+    var chartInLive = 0;
+    if (sig._liveStartEpoch !== undefined && sig._liveStartEpoch !== null) chartInLive = countRealBarsAfterEpoch(completedBars, sig._liveStartEpoch);
+    var ticksIn = isTick ? (totalTicksReceived - (sig._ticks0 || 0)) : 0;
+    var expTicks = isTick ? chartInLive * sig.period : 0;
+    var cause;
+    if (diff > 0) {
+        if (isTick && chartInLive >= 3 && ticksIn < 0.8 * expTicks) cause = "TICK_SHORT";            // 실시간 시세 수신틱이 차트 기준보다 적음
+        else if (chartInLive - liveBars >= 2 && reseeds > 0 && (isTick ? (discarded >= sig.period * 0.5 * (chartInLive - liveBars)) : true) && !(gaps > 0)) cause = "RESEED_LOSS"; // 재조회 때 실시간 빌더 재시작으로 손실
+        else if (!isTick && gaps > 0 && chartInLive - liveBars >= 1) cause = "LIVE_GAP_STOP";        // 무틱공백으로 실시간 정지
+        else if (chartInLive - liveBars >= 2) cause = "LIVE_BAR_MISSED";                              // 실시간이 봉을 놓침(원인 미상)
+        else cause = "COUNTER_LOW_OTHER";                                                             // 실시간 봉수는 맞는데 카운터가 작음(초기값/기타)
+    } else {
+        cause = (postWalk - preCount >= 2) ? "WARM_OVERCOUNT" : "LIVE_OVERCOUNT";                    // 워밍업이 더 셈 / 실시간이 더 셈
+    }
+    var detail = "sig=" + sig.sdate + " " + sig.stime + "@" + Number(sig.price).toFixed(2) +
+        "|live=" + liveBars + "|chartLive=" + chartInLive + "|warm=" + warmAdds + "|init=" + (sig._initCount || 0) +
+        "|pre=" + preCount + "|post=" + postWalk + "|reseed=" + reseeds +
+        (isTick ? ("|discard=" + discarded + "|ticks=" + ticksIn + "|expTicks=" + expTicks) : ("|gap=" + gaps));
+    try {
+        logDiagnostic("[DIAG][GATE_COUNT_SYNC] label=" + sig.tf + " kind=" + sig.kind + " live=" + preCount + " chart=" + chartCnt + " cause=" + cause + " " + detail);
+        var wp = nowServerTimeStr().split(" ");
+        timedPrintOnFile(OUTPUT_FILE, sig.itemName + "," + sig.tf + ",GATE_COUNT_SYNC," + wp[0] + "," + wp[1] + "," + sig.kind + "," + preCount + "," + chartCnt + "," + cause + "," + detail + "\n");
+    } catch (eLog) {}
+}
+function syncGateCounter(sig, bars, preWalkCount) {
+    var completed = bars.slice(0, Math.max(0, bars.length - 1));
+    var chartCnt = countRealBarsAfterEpoch(completed, sig.signalEpoch);
+    var postWalk = sig.barsElapsedSinceRegistration || 0;
+    try { logGateCountSync(sig, preWalkCount, postWalk, chartCnt, completed); } catch (eSync) {}
+    sig.barsElapsedSinceRegistration = chartCnt;
+}
 var pendingSignals = [];
 var barCheckHistory = {}; // [신규][2026-09-05][차트정확도 검증]
 var barCheckRoundCounter = {};
@@ -1912,6 +1981,7 @@ function resolveHistorically(sig, bars) {
         var alreadyCosmeticJudged = (barEpoch <= judgedFromEpoch); // [2026-09-29] 코스메틱(WAITING/PULLBACK 토글) 이력 중복방지 전용 플래그
         if (barEpoch > countedFromEpoch) {
             barsScannedSinceSignal++;
+            sig._warmAdds = (sig._warmAdds || 0) + 1;
             sig.barsElapsedSinceRegistration = barsScannedSinceSignal;
             sig.lastAppliedBarEpoch = barEpoch;
             countedFromEpoch = barEpoch;
@@ -2039,6 +2109,8 @@ function buildNewSignalObject(itemName, tf, kind, sdate, stime, price, period, r
         // 게이트(signalEpoch) 계산에도 그대로 써버린 게 버그였다 - 반드시
         // trueSdate/trueStime(백데이팅 안 된 진짜 삼각형완성 시각)으로 계산.
         signalEpoch: dateTimeToEpochApprox(String(trueSdate || sdate), trueStime || stime), registeredAt: Date.now(),
+        _liveStartEpoch: (typeof lastTickEpoch !== "undefined" ? lastTickEpoch : null), _ticks0: totalTicksReceived, _liveBars: 0, _warmAdds: 0, _initCount: (0 || 0),
+        _reseedN0: getLiveReseedStats(period).n, _discard0: getLiveReseedStats(period).discarded, _gap0: getLiveReseedStats(period).gap,
         // [근본수정][2026-09-09][trueSdate/trueStime을 신호객체 필드로도
         // 저장] signalEpoch 계산에만 쓰고 정작 객체 자체엔 안 남기고
         // 있었다 - 그래서 isDuplicatePendingSignal이 이 값을 쓰도록
@@ -2514,9 +2586,12 @@ function Main_OnRcvChartEx(chartEx) {
             function (rsig) { return rsig.tf === thisFileLabel; },
             function (rsig, resolvedLines, markExplained) {
                 try {
+                    var _cntPre = rsig.barsElapsedSinceRegistration || 0;
                     var _b4 = rsig.state + "|" + (rsig.barsElapsedSinceRegistration || 0) + "|" + (rsig.stateHistory ? rsig.stateHistory.length : 0) + "|" + rsig.lastAppliedBarEpoch + "|" + rsig.lastJudgedBarEpoch;
                     var rResult = resolveHistorically(rsig, bars);
                     if (!rResult) {
+                        var _fb = bars.length > 0 ? dateTimeToEpochApprox(String(bars[0].sdate), bars[0].stime) : null;
+                        if (_fb !== null && _fb <= rsig.signalEpoch) syncGateCounter(rsig, bars, _cntPre);
                         // [수정][2026-09-29] 워밍업 재판정이 카운터/상태/커서를 바꿨는데 저장대상 표시가 없어 재시작시 옛 값으로 복원되던 것 수정(틱봉과 동일)
                         var _af = rsig.state + "|" + (rsig.barsElapsedSinceRegistration || 0) + "|" + (rsig.stateHistory ? rsig.stateHistory.length : 0) + "|" + rsig.lastAppliedBarEpoch + "|" + rsig.lastJudgedBarEpoch;
                         if (_af !== _b4) { pendingStateDirty = true; excelMarkDirty(rsig); }
@@ -2631,6 +2706,7 @@ function Main_OnRcvChartEx(chartEx) {
         // 순수 라이브틱만으로 52봉을 처음부터 채워야 해서 장주기봉은 사실상
         // 실시간검색이 거의 안 되는 문제가 있었다.
         liveCalcs[thisFileLabel] = calc;
+        getLiveReseedStats(thisCycle).n++; // [진단] 실시간 빌더 재시작 횟수
         liveBuilders[thisFileLabel] = new MinuteBarBuilder(thisCycle); // 진행중이던 라이브 봉버킷도 함께 초기화(경계 혼선 방지)
         delete degradedPeriods[thisFileLabel]; // [2026-09-02][재시도보완] 실제 성공했으니 저품질 표시 해제
         // [제거][사용자 요청][철회기능 전체 제거] findClosestCalcDiag/computeRetractionMargin/formatRetractionJudge 삭제됨(사용처 없어짐)

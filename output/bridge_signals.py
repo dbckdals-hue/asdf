@@ -55,6 +55,9 @@
      (b)완전삭제가 (종목,타임프레임,날짜,시각)만으로 "판정 끝남"을 판단해서 같은 시각의 다른 신호(가격/종류 다름)까지
      지우던 것 수정(가격+신호종류까지 매칭). (c)STATS_IMMEDIATE가 같은 파일의 일반 신호줄과 이중집계되던 것 수정.
 
+  7. [2026-09-30 추가] GATE_COUNT_SYNC(스크립트 v5.16): 워밍업이 게이트 카운터를 차트 기준으로 맞출 때 실시간 값과 2 이상 다르면
+     남기는 진단줄. 원인 판별용 수치를 한글 문구로 조립해 대시보드 알림창에 저품질이관처럼 한 줄로 보낸다(데스크탑 알림창엔 안 띄움).
+
 [대시보드 종료 버튼과의 연동]
   대시보드에서 "대시보드 종료" 버튼을 누르면, 이 프로그램에게
   websocket으로 {"cmd":"shutdown"} 메시지가 옵니다. 이걸 받으면:
@@ -524,6 +527,48 @@ def _parse_target(data):
         return (instrument, contract)
     return None
 
+# [신규][2026-09-30] GATE_COUNT_SYNC(게이트 카운터 불일치 진단) 알림창용 한글 문구 조립.
+# 스크립트(Main.PrintOnFile)에 한글을 쓰면 인코딩이 깨질 수 있어, 스크립트는 영문 코드/숫자만 보내고
+# 사람이 읽는 한글은 여기(파이썬)에서 만든다.
+_GATE_SYNC_CAUSE_KR = {
+    "TICK_SHORT": "수신틱 부족(실시간 시세가 차트보다 틱을 적게 받음)",
+    "RESEED_LOSS": "워밍업 재시작으로 실시간 봉 손실",
+    "LIVE_GAP_STOP": "무틱공백으로 실시간 정지",
+    "LIVE_BAR_MISSED": "실시간이 봉을 놓침(원인 미상)",
+    "COUNTER_LOW_OTHER": "실시간 봉수는 맞는데 카운터가 작음(초기값/기타)",
+    "WARM_OVERCOUNT": "워밍업이 봉을 과다 가산",
+    "LIVE_OVERCOUNT": "실시간이 봉을 과다 계산",
+}
+def _gate_sync_kv(detail):
+    kv = {}
+    for seg in (detail or "").split("|"):
+        if "=" in seg:
+            k, v = seg.split("=", 1)
+            kv[k.strip()] = v.strip()
+    return kv
+def _gate_sync_int(kv, key):
+    try:
+        return int(kv.get(key, "0"))
+    except ValueError:
+        return 0
+def compose_gate_sync_reason(sig_kind, live, chart, cause, detail):
+    kv = _gate_sync_kv(detail)
+    try:
+        diff = int(chart) - int(live)
+    except ValueError:
+        diff = 0
+    s = f"{sig_kind} 실시간 {live} / 차트 {chart} (차이 {diff:+d}) | 원인: {_GATE_SYNC_CAUSE_KR.get(cause, cause)}"
+    bits = [f"실시간봉 {_gate_sync_int(kv, 'live')}/같은구간 차트봉 {_gate_sync_int(kv, 'chartLive')}",
+            f"워밍업가산 {_gate_sync_int(kv, 'warm')}", f"재시작 {_gate_sync_int(kv, 'reseed')}회"]
+    if "ticks" in kv:
+        bits.append(f"수신틱 {_gate_sync_int(kv, 'ticks'):,}(차트기준 {_gate_sync_int(kv, 'expTicks'):,}) 버린틱 {_gate_sync_int(kv, 'discard'):,}")
+    if "gap" in kv:
+        bits.append(f"무틱정지 {_gate_sync_int(kv, 'gap')}회")
+    sigtxt = kv.get("sig")
+    if sigtxt:
+        bits.append("신호 " + sigtxt)
+    return s + " | " + ", ".join(bits)
+
 def parse_line(line):
     # 형식: 종목,타임프레임,신호,날짜,시각,가격[,7번째 필드]
     parts = line.strip().split(",")
@@ -608,6 +653,15 @@ def parse_line(line):
             # 확인). parts[5]=주기(cycle), parts[6]=소진된 재시도횟수.
             if len(parts) >= 7:
                 result["reason"] = "주기=" + parts[5] + " 재시도=" + parts[6] + "회 소진 - 다음 순환으로 이관"
+        elif result["kind"] == "GATE_COUNT_SYNC":
+            # [신규][2026-09-30] 형식: item,tf,GATE_COUNT_SYNC,date,time,신호종류,실시간카운터,차트카운터,원인코드,상세(key=value|...)
+            if len(parts) >= 9:
+                result["signalKind"] = parts[5]
+                result["liveCount"] = parts[6]
+                result["chartCount"] = parts[7]
+                result["cause"] = parts[8]
+                result["detail"] = parts[9] if len(parts) >= 10 else ""
+                result["reason"] = compose_gate_sync_reason(parts[5], parts[6], parts[7], parts[8], result["detail"])
         elif result["kind"] == "WRITE_FAILURE_ALERT":
             # [2026-08-24 신규] 6번째 필드(parts[5])=버퍼적체줄수(대시보드가
             # price로 표시), 7번째 필드(parts[6])=실제 에러메시지(+선택적
@@ -955,7 +1009,7 @@ def purge_file(path, days, keep_pending):
 
         item, label, kind, date, time_, price = p[0], p[1], p[2], p[3], p[4], p[5]
 
-        if kind in ("HEARTBEAT", "REMOVAL_LOG"):
+        if kind in ("HEARTBEAT", "REMOVAL_LOG", "GATE_COUNT_SYNC"):
             # [2026-08-04 추가] REMOVAL_LOG는 실제 매매신호가 아니라 감사용
             # 백업 로그라서, HEARTBEAT와 동일하게 "나이"만으로 지운다.
             # resolved_keys(달성/무효/철회 매칭) 로직에 섞이면, RESET_WIPED
@@ -1357,7 +1411,7 @@ async def tail_loop():
                 existing_content = fh.read()
             for line in existing_content.splitlines():
                 parsed = parse_line(line)
-                if parsed and parsed["kind"] not in ("HEARTBEAT", "STATUS_ACHIEVED", "STATUS_INVALID", "GAP_CHECK", "STATS_IMMEDIATE", "PRETTY2_CONFIRMED"):
+                if parsed and parsed["kind"] not in ("HEARTBEAT", "STATUS_ACHIEVED", "STATUS_INVALID", "GAP_CHECK", "STATS_IMMEDIATE", "PRETTY2_CONFIRMED", "GATE_COUNT_SYNC"):
                     is_duplicate_signal(parsed)
                     primed_total += 1
             _set_pos(f["path"], os.path.getsize(f["path"]))
@@ -1468,7 +1522,7 @@ async def tail_loop():
                                             "STALL_ALERT", "STALL_RECOVERED", "WRITE_FAILURE_ALERT", "PENDING_MISMATCH_ALERT",
                                             "UNEXPLAINED_REMOVAL_ALERT", "EXCEL_RESTORE_FAILURE_ALERT", "REGISTERED",
                                             "SCRIPT_STARTED", "BAR_DATA_UNSTABLE_ALERT", "DEGRADED_DEFERRED",
-                                            "PRETTY2_CONFIRMED")
+                                            "PRETTY2_CONFIRMED", "GATE_COUNT_SYNC")
                         if ENABLE_DESKTOP_ALERT and parsed["kind"] not in _NON_ALERT_KINDS:
                             if not is_duplicate_signal(parsed):
                                 if is_recent_signal(parsed["date"]) and should_alert(parsed["item"], parsed["price"]):
