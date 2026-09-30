@@ -1,5 +1,6 @@
 // ================================================================================
-// [파일] GOLD(GCZ26) 분봉(1안) | v5.17(수정시 버전+이력 필수 갱신)
+// [파일] GOLD(GCZ26) 분봉(1안) | v5.18(수정시 버전+이력 필수 갱신)
+// [2026-09-30][v5.18 - 부하 회복] 분봉: 워밍업이 카운터만 바뀐 신호까지 엑셀 저장하던 것을 원본처럼 상태/이력 변화 때만 저장(엑셀 쓰기 원본 수준 복귀). 봉시각→epoch 변환 캐시(워밍업 처리시간 원본 대비 약 -10%, v5.17 대비 약 -40%).
 // [2026-09-30][v5.17 - 차트봉 카운트를 단일 기준값으로 통일] 사용자 실측: 알림의 차트 카운트(1160/327/1263)가 실제 차트(1162/330/1280)와 0.2~1.3% 내로 일치,
 //   실시간이 센 값(82/277/1060)은 크게 어긋남 -> 차트 완결봉 수(마지막 봉/filled 제외)를 모든 기능의 기준값으로 사용.
 //   (1)워밍업 재판정이 창이 신호를 덮을 때 영속 카운터를 차트 기준 봉수로 직접 기록 - 26봉 게이트/판정사유(gate=N/26)/게이트 신뢰성 검사가 같은 값을 봄
@@ -1327,10 +1328,17 @@ function nowServerTimeStr() {
     return cd.getUTCFullYear() + ("0" + (cd.getUTCMonth() + 1)).slice(-2) + ("0" + cd.getUTCDate()).slice(-2) + " " +
         pad(cd.getUTCHours()) + ":" + pad(cd.getUTCMinutes()) + ":" + pad(cd.getUTCSeconds());
 }
+var _epochCache = {}, _epochCacheN = 0;
 function dateTimeToEpochApprox(sdate, stime) {
+    var ck = sdate + " " + stime;
+    var hit = _epochCache[ck];
+    if (hit !== undefined) return hit;
     var y = parseInt(sdate.substr(0, 4), 10), mo = parseInt(sdate.substr(4, 2), 10), d = parseInt(sdate.substr(6, 2), 10);
     var parts = stime.split(":");
-    return Math.floor(Date.UTC(y, mo - 1, d, parseInt(parts[0], 10), parseInt(parts[1], 10), parseInt(parts[2], 10)) / 1000);
+    var v = Math.floor(Date.UTC(y, mo - 1, d, parseInt(parts[0], 10), parseInt(parts[1], 10), parseInt(parts[2], 10)) / 1000);
+    if (_epochCacheN >= 20000) { _epochCache = {}; _epochCacheN = 0; } // 메모리 상한: 초과 시 비움
+    _epochCache[ck] = v; _epochCacheN++;
+    return v;
 }
 function formatLabel(cycle) { return "M" + ("0000" + cycle).slice(-4); }
 
@@ -2611,13 +2619,13 @@ function Main_OnRcvChartEx(chartEx) {
             function (rsig, resolvedLines, markExplained) {
                 try {
                     var _cntPre = rsig.barsElapsedSinceRegistration || 0;
-                    var _b4 = rsig.state + "|" + (rsig.barsElapsedSinceRegistration || 0) + "|" + (rsig.stateHistory ? rsig.stateHistory.length : 0) + "|" + rsig.lastAppliedBarEpoch + "|" + rsig.lastJudgedBarEpoch;
+                    var _b4 = rsig.state + "|" + (rsig.stateHistory ? rsig.stateHistory.length : 0);
                     var rResult = resolveHistorically(rsig, completedBars);
                     if (!rResult) {
                         var _fb = bars.length > 0 ? dateTimeToEpochApprox(String(bars[0].sdate), bars[0].stime) : null;
                         if (_fb !== null && _fb <= rsig.signalEpoch) syncGateCounter(rsig, completedBars, _cntPre);
                         // [수정][2026-09-29] 워밍업 재판정이 카운터/상태/커서를 바꿨는데 저장대상 표시가 없어 재시작시 옛 값으로 복원되던 것 수정(틱봉과 동일)
-                        var _af = rsig.state + "|" + (rsig.barsElapsedSinceRegistration || 0) + "|" + (rsig.stateHistory ? rsig.stateHistory.length : 0) + "|" + rsig.lastAppliedBarEpoch + "|" + rsig.lastJudgedBarEpoch;
+                        var _af = rsig.state + "|" + (rsig.stateHistory ? rsig.stateHistory.length : 0);
                         if (_af !== _b4) { pendingStateDirty = true; excelMarkDirty(rsig); }
                         return false;
                     }
