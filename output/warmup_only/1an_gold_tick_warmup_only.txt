@@ -1,5 +1,30 @@
-# 워밍업 전용 스크립트 생성기 (나스닥 틱/분). 결과물은 1an_nasdaq_{tick,min}_warmup_only.txt
-COMMON = r'''
+// ================================================================================
+// [파일] GOLD(GCZ26) 틱봉 워밍업 전용 (측정용) | v1.0 2026-09-30
+// 목적: 워밍업이 왜 오래 걸리는지 보려고, 봉 요청/수신/삭제만 하는 최소 스크립트.
+//   - 엑셀 저장/복원, 신호검색, 감시목록, 실시간 시세, 파일 출력 전부 없음 (화면 로그만)
+//   - 요청 개수/순서는 기존 1안 스크립트와 동일(틱봉 30~1000, 5틱 단위 195개, 요청봉수 5000/4000/2000 단계)
+//   - 응답마다 걸린 시간(ms), 수신 봉 수, 타임아웃/지각응답을 화면에 남기고 한 바퀴마다 요약을 찍음
+//   - 조정값은 아래 "조정값" 블록에서 (READ_ALL_BARS=true 로 바꾸면 기존 스크립트처럼 봉을 전부 읽는 시간까지 잼)
+// ================================================================================
+var MARKET_DATA_CODE = "GCZ26";
+var INSTRUMENT_NAME = "GOLD";
+var KIND_NAME = "틱봉";
+
+function periodConst() { return CHART_PERIOD_TICK; }
+var START_CYCLE = 30, END_CYCLE = 1000;
+var PROBE_DEFAULT = [145];
+var TICK_TIER1_UNTIL = 500, TICK_TIER1_COUNT = 5000, TICK_TIER2_START = 600, TICK_TIER2_COUNT = 4000, TICK_TIER2_END = 700, TICK_TIER3_START = 800, TICK_TIER3_COUNT = 2000;
+function requestCount(cycle) {
+    var count;
+    if (cycle <= TICK_TIER1_UNTIL) count = TICK_TIER1_COUNT;
+    else if (cycle <= TICK_TIER2_START) count = TICK_TIER1_COUNT - Math.round((TICK_TIER1_COUNT - TICK_TIER2_COUNT) * (cycle - TICK_TIER1_UNTIL) / (TICK_TIER2_START - TICK_TIER1_UNTIL));
+    else if (cycle <= TICK_TIER2_END) count = TICK_TIER2_COUNT;
+    else if (cycle <= TICK_TIER3_START) count = TICK_TIER2_COUNT - Math.round((TICK_TIER2_COUNT - TICK_TIER3_COUNT) * (cycle - TICK_TIER2_END) / (TICK_TIER3_START - TICK_TIER2_END));
+    else count = TICK_TIER3_COUNT;
+    return Math.ceil(count / 10) * 10;
+}
+function buildTargetList() { var l = []; for (var t = START_CYCLE; t <= END_CYCLE; t += 5) l.push(t); return l; }
+
 // ---- 조정값 (측정용) ----
 var REQUEST_TIMEOUT_MS = 10000;   // 응답 대기 한계
 var REMOVE_DELAY_MS = 300;        // 응답 받은 뒤 차트객체 삭제까지 (이벤트 안에서 바로 안 지움 - 크래시 방지)
@@ -132,49 +157,3 @@ function Main_OnTimer(id) {
         if (!waiting) Main.SetTimer(1, GAP_AFTER_REMOVE_MS); // 삭제가 끝난 뒤 다음 요청은 별도 이벤트(타이머1)에서
     }
 }
-'''
-def head(kind):
-    return f'''// ================================================================================
-// [파일] NASDAQ100(NQZ26) {kind[0]}봉 워밍업 전용 (측정용) | v1.0 2026-09-30
-// 목적: 워밍업이 왜 오래 걸리는지 보려고, 봉 요청/수신/삭제만 하는 최소 스크립트.
-//   - 엑셀 저장/복원, 신호검색, 감시목록, 실시간 시세, 파일 출력 전부 없음 (화면 로그만)
-//   - 요청 개수/순서는 기존 1안 스크립트와 동일({kind[1]})
-//   - 응답마다 걸린 시간(ms), 수신 봉 수, 타임아웃/지각응답을 화면에 남기고 한 바퀴마다 요약을 찍음
-//   - 조정값은 아래 "조정값" 블록에서 (READ_ALL_BARS=true 로 바꾸면 기존 스크립트처럼 봉을 전부 읽는 시간까지 잼)
-// ================================================================================
-var MARKET_DATA_CODE = "NQZ26";
-var INSTRUMENT_NAME = "NASDAQ100";
-var KIND_NAME = "{kind[0]}봉";
-'''
-TICK = head(("틱","틱봉 30~1000, 5틱 단위 195개, 요청봉수 5000/4000/2000 단계")) + r'''
-function periodConst() { return CHART_PERIOD_TICK; }
-var START_CYCLE = 30, END_CYCLE = 1000;
-var PROBE_DEFAULT = [145];
-var TICK_TIER1_UNTIL = 500, TICK_TIER1_COUNT = 5000, TICK_TIER2_START = 600, TICK_TIER2_COUNT = 4000, TICK_TIER2_END = 700, TICK_TIER3_START = 800, TICK_TIER3_COUNT = 2000;
-function requestCount(cycle) {
-    var count;
-    if (cycle <= TICK_TIER1_UNTIL) count = TICK_TIER1_COUNT;
-    else if (cycle <= TICK_TIER2_START) count = TICK_TIER1_COUNT - Math.round((TICK_TIER1_COUNT - TICK_TIER2_COUNT) * (cycle - TICK_TIER1_UNTIL) / (TICK_TIER2_START - TICK_TIER1_UNTIL));
-    else if (cycle <= TICK_TIER2_END) count = TICK_TIER2_COUNT;
-    else if (cycle <= TICK_TIER3_START) count = TICK_TIER2_COUNT - Math.round((TICK_TIER2_COUNT - TICK_TIER3_COUNT) * (cycle - TICK_TIER2_END) / (TICK_TIER3_START - TICK_TIER2_END));
-    else count = TICK_TIER3_COUNT;
-    return Math.ceil(count / 10) * 10;
-}
-function buildTargetList() { var l = []; for (var t = START_CYCLE; t <= END_CYCLE; t += 5) l.push(t); return l; }
-''' + COMMON
-MIN = head(("분","분봉 1~110분 110개, 요청봉수는 기간별 최대치(최대 6000)")) + r'''
-function periodConst() { return CHART_PERIOD_MINUTE; }
-var START_CYCLE = 1, END_CYCLE = 110;
-var PROBE_DEFAULT = [12];
-var MIN_BARS_NEEDED = 250, MAX_SPAN_MINUTES = 40000, MAX_BAR_COUNT = 6000;
-function requestCount(cycle) {
-    var count = Math.floor(MAX_SPAN_MINUTES / cycle);
-    if (count > MAX_BAR_COUNT) count = MAX_BAR_COUNT;
-    if (count < MIN_BARS_NEEDED) count = MIN_BARS_NEEDED;
-    if (cycle >= 5) { count = Math.floor(count * 0.9); if (count < MIN_BARS_NEEDED) count = MIN_BARS_NEEDED; }
-    return count;
-}
-function buildTargetList() { var l = []; for (var m = START_CYCLE; m <= END_CYCLE; m++) l.push(m); return l; }
-''' + COMMON
-open('1an_nasdaq_tick_warmup_only.txt','w',encoding='utf8',newline='').write(TICK)
-open('1an_nasdaq_min_warmup_only.txt','w',encoding='utf8',newline='').write(MIN)

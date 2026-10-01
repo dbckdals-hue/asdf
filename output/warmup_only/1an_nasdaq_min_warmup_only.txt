@@ -12,6 +12,7 @@ var KIND_NAME = "분봉";
 
 function periodConst() { return CHART_PERIOD_MINUTE; }
 var START_CYCLE = 1, END_CYCLE = 110;
+var PROBE_DEFAULT = [12];
 var MIN_BARS_NEEDED = 250, MAX_SPAN_MINUTES = 40000, MAX_BAR_COUNT = 6000;
 function requestCount(cycle) {
     var count = Math.floor(MAX_SPAN_MINUTES / cycle);
@@ -28,6 +29,7 @@ var REMOVE_DELAY_MS = 300;        // 응답 받은 뒤 차트객체 삭제까지
 var GAP_AFTER_REMOVE_MS = 200;    // 삭제 후 다음 요청까지 (삭제와 재요청을 서로 다른 이벤트로 분리)
 var MAX_PASSES = 2;               // 몇 바퀴 돌고 멈출지 (0 = 무한)
 var READ_ALL_BARS = false;        // true면 받은 봉의 고가/저가/날짜/시간을 전부 읽어서 시간 측정 (기존 스크립트가 하는 일)
+var PROBE_CYCLES = PROBE_DEFAULT; // 이 주기들은 가장 최근 봉 5개의 날짜/시간/고가/저가를 화면에 찍음 (HTS 차트와 시각 표기 비교용)
 var USE_IND_SET = false;          // true면 기존처럼 "#주기" 지표를 같이 요청 (주기표 확인용). 기본은 봉만 요청
 
 var scriptStartMs = 0, passStartMs = 0, passNo = 0;
@@ -37,6 +39,7 @@ var pendingRemove = [];
 var stats = null;
 
 function logMsg(m) { Main.MessageLog("[" + INSTRUMENT_NAME + " " + KIND_NAME + " 워밍업전용] " + m); }
+function formatTime(rawTime) { var s = ("000000" + Math.floor(rawTime / 10000)).slice(-6); return s.slice(0, 2) + ":" + s.slice(2, 4) + ":" + s.slice(4, 6); }
 function fmtSec(ms) { return (ms / 1000).toFixed(1) + "초"; }
 function newStats() { return { ok: 0, timeout: 0, fail: 0, late: 0, bars: 0, sumMs: 0, maxMs: 0, maxCycle: 0, slow: [], timeouts: [], fails: [] }; }
 
@@ -104,6 +107,11 @@ function Main_OnRcvChartEx(chartEx) {
             try { sink += Number(chartEx.GetHigh(1, i)) + Number(chartEx.GetLow(1, i)); chartEx.GetSDate(1, i); chartEx.GetSTime(1, i); } catch (e) {}
         }
         readMs = Date.now() - r0;
+    }
+    for (var pi = 0; pi < PROBE_CYCLES.length; pi++) if (PROBE_CYCLES[pi] === curCycle) {
+        for (var k = 0; k < 5 && k < n; k++) {
+            try { logMsg("   [프로브 " + curCycle + "] 최근봉 -" + k + ": " + chartEx.GetSDate(1, k) + " " + formatTime(chartEx.GetSTime(1, k)) + "  고가 " + chartEx.GetHigh(1, k) + " 저가 " + chartEx.GetLow(1, k)); } catch (eP) { logMsg("   [프로브] 읽기 실패: " + eP.message); }
+        }
     }
     stats.ok++; stats.bars += n; stats.sumMs += respMs;
     if (respMs > stats.maxMs) { stats.maxMs = respMs; stats.maxCycle = curCycle; }
