@@ -1,5 +1,6 @@
 // ================================================================================
-// [파일] GOLD(GCZ26) 분봉(1안) | v5.27(수정시 버전+이력 필수 갱신)
+// [파일] SP500(ESZ26) 분봉(1안) | v5.28(수정시 버전+이력 필수 갱신)
+// [2026-10-01][v5.28] 다이아몬드 수정: 흰색=왼쪽 평탄 3봉 이상+왼쪽 8봉 중 6봉 구름(두께 제외)+오른쪽 평탄 3봉(신호봉 포함) 동안 SB 불변·구름 유지, 신호 뒤 2봉째 등록(기존 8봉째). 보라=그대로(오른쪽 평탄 1봉은 기본신호가 이미 확인). 소스에 [왼쪽평탄구간]/[오른쪽평탄구간]/[삼각형]/[왼쪽구름층]/[오른쪽구름층]/[등록시점] 주석 표시.
 // [2026-10-01][v5.27] 흰색 다이아몬드 조건 추가: 앞쪽 평탄구간 3봉 이상(DIAMOND_WHITE_MIN_FLAT_RUN). 보라(2봉 이상)는 그대로.
 // [2026-10-01][v5.26 - 최종 정리] 확인용 진단/알림 제거(카운터 불일치 GATE_COUNT_SYNC 줄·알림, 이어받기 진단파일·결과 알림). 기능은 유지: 실시간 빌더 이어받기(v5.23), 카운터 차트 기준 교정, 저품질이관 묶음 알림(v5.22), 다이아몬드 신기준(v5.21), 타임아웃 재시도(v5.19), 분봉 게이트 25봉(v5.20). 이어받기를 끄려면 LIVE_SEED_ENABLED=false.
 // [2026-09-30][v5.17 - 차트봉 카운트를 단일 기준값으로 통일] 사용자 실측: 알림의 차트 카운트(1160/327/1263)가 실제 차트(1162/330/1280)와 0.2~1.3% 내로 일치,
@@ -691,8 +692,8 @@
 //   저장키는 건드리지 않는다.
 // ================================================================================
 
-var MARKET_DATA_CODE = "GCZ26"; // [2026-09-25][v5.0] GOLD(GCZ26)에서 SP500용으로 종목코드만 교체 - 실제 예스스팟 코드로 반드시 확인 후 교체
-var INSTRUMENT_NAME = "GOLD"; // 신호파일에 찍히는 종목 표기(itemName)
+var MARKET_DATA_CODE = "ESZ26"; // [2026-09-25][v5.0] GOLD(GCZ26)에서 SP500용으로 종목코드만 교체 - 실제 예스스팟 코드로 반드시 확인 후 교체
+var INSTRUMENT_NAME = "SP500"; // 신호파일에 찍히는 종목 표기(itemName)
 var CONTRACT_SUFFIX = MARKET_DATA_CODE.slice(-3);
 var INSTRUMENT_TAG = INSTRUMENT_NAME + " " + CONTRACT_SUFFIX;
 // [제거][사용자 요청][철회기능 전체 제거] HOLD_MARGIN_THRESHOLD(_BY_INSTRUMENT) 삭제됨(사용처 없어짐)
@@ -1051,6 +1052,9 @@ function evalSignal(sa, sb) {
     // 원인은 Main_OnRcvChartEx의 지각응답 오귀속 - 그건 별도로 근본수정
     // 했음). 근거 없이 계산 로직 자체를 바꾸는 땜빵이라 판단해 제거하고
     // 09-07 원본(되짚기 자체엔 인위적 상한 없음)으로 되돌림.
+    // [왼쪽평탄구간]+[오른쪽평탄구간] flat1 = 최근 3봉 SB 동일(왼쪽 기준봉 sb[2], 삼각형 sb[1], 오른쪽 기준봉 sb[0]). flat2 = 4봉(삼각형 폭2).
+    // [삼각형] 폭1: sa[1]만 SB 위(sa[2],sa[0]는 SB 이하). 폭2: sa[2],sa[1]이 SB 위(sa[3],sa[0]는 SB 이하).
+    // [등록시점] 기본신호는 오른쪽 기준봉(sa[0]<=sb[0])이 확정되는 봉에서 등록된다.
     if (flat1 && sa.length > 2) {
         b1 = sa[2] <= sb[2] && sa[1] > sb[1] && sa[0] <= sb[0];
         s1 = sa[2] >= sb[2] && sa[1] < sb[1] && sa[0] >= sb[0];
@@ -1070,6 +1074,7 @@ function evalSignal(sa, sb) {
             // "SB가 몇 봉째 안 바뀌었는지"(flatRun1)를 되짚기와 무관하게
             // 독립적으로 다시 계산한다 - 되짚기(lf1, 등록시각/게이트용)와
             // 별표(flatRun1, 표시전용)는 이제 서로 전혀 영향을 안 준다.
+            // [왼쪽평탄구간] flatRun = 왼쪽 기준봉부터 SB가 같은 봉수(보라/흰색 배지 판정과 별표에 사용)
             var flatRun1 = 0, fi1 = 2;
             while (fi1 < sb.length && sb[fi1] === sb[0]) { flatRun1++; fi1++; }
             if (b1) b1Star = starLevelFromRun(flatRun1);
@@ -1224,8 +1229,10 @@ function evalRightCloudCases(saHist, sbHist, isBull) {
 var DIAMOND_CRITERIA_LEGACY = false;   // true = 기존(v5.20 이전) 보라/흰색 기준으로 복원
 var DIAMOND_MIN_FLAT_RUN = 2;          // 보라: 평탄구간 최소 봉수
 var DIAMOND_PURPLE_LEFT_MIN_BARS = 4;  // 보라: 왼쪽 8봉 중 구름이 있어야 하는 최소 봉수
-var DIAMOND_WHITE_MIN_FLAT_RUN = 3;    // 흰색: 앞쪽 평탄구간 최소 봉수 (v5.27, 보라는 2 유지)
-var DIAMOND_WHITE_SIDE_MIN_BARS = 6;   // 흰색: 왼쪽/오른쪽 8봉 중 구름이 있어야 하는 최소 봉수
+var DIAMOND_WHITE_MIN_FLAT_RUN = 3;    // [왼쪽평탄구간] 흰색: 왼쪽 평탄 최소 봉수 (SB 불변, 삼각형 왼쪽 기준봉 포함). 보라는 위 DIAMOND_MIN_FLAT_RUN=2
+var DIAMOND_WHITE_SIDE_MIN_BARS = 6;   // [왼쪽구름층] 흰색: 왼쪽 8봉 중 반대색 구름이 있어야 하는 최소 봉수 (두께는 보지 않음)
+var DIAMOND_WHITE_RIGHT_FLAT_BARS = 3; // [오른쪽평탄구간][오른쪽구름층][등록시점] 흰색: 삼각형 오른쪽 기준봉(신호봉)부터 세어 이 봉수 동안 SB 불변 + 매 봉 구름 유지.
+                                       //   이 봉수째 되는 봉에서 흰색 확정(=신호봉 뒤 N-1봉째). 3이면 신호 뒤 2봉째 등록. 값만 바꾸면 등록 시점도 같이 바뀐다.
 function diamondCloudThickness(sa, sb, i, isBull) { return isBull ? (sb[i] - sa[i]) : (sa[i] - sb[i]); } // 삼각형과 반대색 구름이면 양수
 function diamondSideStats(sa, sb, from, isBull) {
     var n = PRETTY_TRIANGLE2_LOOKAHEAD_BARS, cnt = 0, sum = 0;
@@ -1239,21 +1246,32 @@ function diamondSideStats(sa, sb, from, isBull) {
 // 보라: 삼각형 완성 시점. leftFrom = 삼각형 왼쪽 첫 봉 index(폭1 신호=2, 폭2 신호=3)
 function checkDiamondPurpleNew(sa, sb, isBull, leftFrom, flatRun, apexSharp) {
     var out = { ok: false, leftStrict: false };
+    // [삼각형] 꼭짓점이 뾰족해야 함(apexSharp). 폭1은 항상 통과, 폭2는 두 봉 높이 차이가 APEX_SHARP_HEIGHT_RATIO 이상.
+    // [왼쪽평탄구간] 삼각형 왼쪽 SB 불변 봉수(flatRun, 왼쪽 기준봉 포함)가 DIAMOND_MIN_FLAT_RUN 이상.
+    // [오른쪽평탄구간] 삼각형 오른쪽 기준봉(최신봉)의 SB 동일은 기본신호(evalSignal flat1/flat2)가 이미 보장 - 보라는 여기서 따로 안 봄.
+    // [등록시점] 보라는 삼각형 완성(신호 발생) 즉시 등록.
     if (!apexSharp || !(flatRun >= DIAMOND_MIN_FLAT_RUN)) return out;
+    // [왼쪽구름층] 왼쪽 8봉 중 반대색 구름이 DIAMOND_PURPLE_LEFT_MIN_BARS 봉 이상.
     var left = diamondSideStats(sa, sb, leftFrom, isBull);
     if (!left.enough || left.cnt < DIAMOND_PURPLE_LEFT_MIN_BARS) return out;
     out.ok = true;
-    var threshold = computeAtrFromHist(sa) * PRETTY_TRIANGLE_RATIO;
-    out.leftStrict = flatRun >= DIAMOND_WHITE_MIN_FLAT_RUN && left.cnt >= DIAMOND_WHITE_SIDE_MIN_BARS && left.avg >= threshold; // 흰색의 왼쪽 조건(신호 시점에 미리 계산해 둠)
+    // 흰색의 왼쪽 조건(신호 시점에 미리 계산해 둠): [왼쪽평탄구간] 흰색 최소봉수 + [왼쪽구름층] 8봉 중 6봉 이상(두께 제외)
+    out.leftStrict = flatRun >= DIAMOND_WHITE_MIN_FLAT_RUN && left.cnt >= DIAMOND_WHITE_SIDE_MIN_BARS;
     return out;
 }
-// 흰색: 삼각형 뒤 8봉이 쌓인 시점(index 0..7 = 새로 쌓인 8봉). leftStrict 는 보라 통과 시점에 계산한 값.
+// 흰색: 신호봉(삼각형 오른쪽 기준봉)부터 DIAMOND_WHITE_RIGHT_FLAT_BARS 봉이 모인 시점에 호출된다(index 0 = 최신봉, N-1 = 신호봉).
+// leftStrict 는 보라 통과 시점에 계산한 값([왼쪽평탄구간]+[왼쪽구름층]).
 function evalDiamondWhiteNew(sa, sb, isBull, leftStrict) {
     if (!leftStrict) return { matched: false, cases: [] };
-    var right = diamondSideStats(sa, sb, 0, isBull);
-    var threshold = computeAtrFromHist(sa) * PRETTY_TRIANGLE_RATIO;
-    var ok = right.enough && right.cnt >= DIAMOND_WHITE_SIDE_MIN_BARS && right.avg >= threshold;
-    return { matched: ok, cases: ok ? [4] : [] }; // 케이스 4 = 신기준(왼쪽+오른쪽 구름 확인)
+    var n = DIAMOND_WHITE_RIGHT_FLAT_BARS;
+    if (sa.length < n || sb.length < n) return { matched: false, cases: [] };
+    for (var i = 0; i < n; i++) {
+        // [오른쪽평탄구간] 오른쪽 n봉 모두 SB가 같아야 한다(SB가 바뀌면 흰색 아님).
+        if (sb[i] !== sb[0]) return { matched: false, cases: [] };
+        // [오른쪽구름층] 오른쪽 n봉 모두 반대색 구름이 있어야 한다(두께는 보지 않음).
+        if (!(diamondCloudThickness(sa, sb, i, isBull) > 0)) return { matched: false, cases: [] };
+    }
+    return { matched: true, cases: [4] }; // 케이스 4 = 신기준
 }
 function SignalCalculator() {
     this.ex9h = new SlidingExtreme(9, 'max'); this.ex9l = new SlidingExtreme(9, 'min');
@@ -1293,7 +1311,8 @@ SignalCalculator.prototype.onBar = function (high, low, sdate, stime) {
         for (var p2i = this.pendingPretty2.length - 1; p2i >= 0; p2i--) {
             var pc = this.pendingPretty2[p2i];
             pc.bars++;
-            if (pc.bars >= PRETTY_TRIANGLE2_LOOKAHEAD_BARS) {
+            // [등록시점] 흰색 확정 시점: 신기준=신호봉 뒤 (DIAMOND_WHITE_RIGHT_FLAT_BARS-1)봉째, 기존(LEGACY)=8봉째
+            if (pc.bars >= (DIAMOND_CRITERIA_LEGACY ? PRETTY_TRIANGLE2_LOOKAHEAD_BARS : DIAMOND_WHITE_RIGHT_FLAT_BARS - 1)) {
                 var rc = DIAMOND_CRITERIA_LEGACY ? evalRightCloudCases(this.saHist, this.sbHist, pc.isBull) : evalDiamondWhiteNew(this.saHist, this.sbHist, pc.isBull, pc.leftStrict); // [v5.21] 신기준(기존은 LEGACY 플래그로 복원)
                 this.pretty2Events.push({ sdate: pc.sdate, stime: pc.stime, price: pc.price, kind: pc.kind, confirmed: rc.matched, cases: rc.cases });
                 this.pendingPretty2.splice(p2i, 1);
