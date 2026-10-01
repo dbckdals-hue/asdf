@@ -10,9 +10,9 @@
 var MARKET_DATA_CODE = "NQZ26";
 var CYCLE = 30;           // 검증할 틱봉 주기 (작을수록 짧은 시간에 비교할 봉이 많아짐)
 var COLLECT_SEC = 60;     // 최소 수집 시간(초)
-var MIN_TICKS = 930;      // 30틱봉 30개를 만들 만큼(30x30+30) 틱이 모일 때까지 계속 수집 (틱이 빠른 시간대는 몇 분, 느리면 더 걸림)
+var MIN_TICKS = 630;      // 30틱봉 20개를 만들 만큼(20x30+30) 틱이 모일 때까지 계속 수집 (틱이 빠른 시간대는 몇 분, 느리면 더 걸림)
 var MAX_SEC = 1800;        // 아무리 느려도 이 시간(초)에는 끝냄
-var CHART_COUNT = 60;    // 차트에서 받을 봉 수
+var CHART_COUNT = 40;    // 차트에서 받을 봉 수
 var TIMEOUT_MS = 20000;
 var MAX_TICKS = 60000;
 
