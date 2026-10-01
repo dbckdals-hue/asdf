@@ -14,7 +14,7 @@ var CHART_COUNT = 200;    // 차트에서 받을 봉 수
 var TIMEOUT_MS = 20000;
 var MAX_TICKS = 60000;
 
-var ticks = [], waiting = false, pendingRemove = [], startMs = 0;
+var ticks = [], waiting = false, pendingRemove = [], startMs = 0, lastProg = -1;
 var RESULT_FILE = "C:\\dashboard\\data\\gold_tick_probe_result.txt"; // 결과 요약만 저장(몇 줄)
 var resultBuf = [];
 function logMsg(m) { Main.MessageLog("[GOLD 틱정렬프로브] " + m); resultBuf.push(m); }
@@ -36,9 +36,10 @@ function Main_OnUpdateMarket(itemcode, updateID, exchangeKind) {
 function Main_OnStart() {
     for (var k = 1; k <= 10; k++) { try { Main.KillTimer(k); } catch (e) {} }
     startMs = Date.now();
+    logMsg("스크립트 시작됨 (v2: 1초 타이머 방식)");
+    try { Main.PrintOnFile(RESULT_FILE, "[시작] 틱정렬프로브 시작 - 결과는 끝나면 이 파일에 이어서 저장됩니다\n"); } catch (eF) { logMsg("시작 파일 쓰기 실패: " + eF.message); }
     try { Main.ReqMarketData(MARKET_DATA_CODE, 0); logMsg("시세구독 시작 - " + COLLECT_SEC + "초 동안 틱 수집 후 " + CYCLE + "틱 차트와 비교합니다(약 " + Math.round(COLLECT_SEC / 60 + 0.5) + "분)"); } catch (e) { logMsg("시세구독 실패: " + e.message); }
-    Main.SetTimer(1, COLLECT_SEC * 1000);
-    Main.SetTimer(3, 30000);
+    Main.SetTimer(3, 1000);
 }
 function sendChart() {
     try {
@@ -100,8 +101,13 @@ function analyze(ch) {
     saveResult();
 }
 function Main_OnTimer(id) {
-    if (id == 1) { Main.KillTimer(1); Main.KillTimer(3); sendChart(); }
+    if (id == 1) { Main.KillTimer(1); }
     else if (id == 2) { Main.KillTimer(2); if (waiting) { waiting = false; logMsg("차트 응답 타임아웃"); saveResult(); } }
-    else if (id == 3) { Main.SetTimer(3, 30000); logMsg("수집 중... 경과 " + Math.round((Date.now() - startMs) / 1000) + "초 / " + COLLECT_SEC + "초, 지금까지 틱 " + ticks.length + "개" + (ticks.length === 0 ? " (틱이 0개면 시세구독이 안 되는 것)" : "")); }
+    else if (id == 3) {
+        var el = Math.round((Date.now() - startMs) / 1000);
+        if (el >= COLLECT_SEC) { Main.KillTimer(3); sendChart(); return; }
+        Main.SetTimer(3, 1000);
+        if (el % 10 === 0 && el !== lastProg) { lastProg = el; logMsg("수집 중... 경과 " + el + "초 / " + COLLECT_SEC + "초, 지금까지 틱 " + ticks.length + "개" + (ticks.length === 0 ? " (틱이 0개면 시세구독이 안 되는 것)" : "")); }
+    }
     else if (id == 5) { Main.KillTimer(5); var l = pendingRemove; pendingRemove = []; for (var i = 0; i < l.length; i++) { try { Main.RemoveObject(l[i]); } catch (e) {} } }
 }
