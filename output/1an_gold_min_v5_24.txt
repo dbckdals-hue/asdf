@@ -1,6 +1,6 @@
 // ================================================================================
-// [파일] GOLD(GCZ26) 분봉(1안) | v5.23(수정시 버전+이력 필수 갱신)
-// [2026-10-01][v5.23 - 실시간 빌더 이어받기(골드 시험판)] 워밍업 응답 때 실시간 빌더를 빈 상태로 재시작하던 것을, 차트 봉 경계에 맞춰 형성 중 봉을 이어받게 변경 + 실시간 봉 시각을 차트 기준으로 통일. 실패하면 예전 방식. LIVE_SEED_ENABLED=false 로 복원. v5.22(저품질이관 묶음, 다이아몬드 신기준, 타임아웃 재시도, 게이트 25봉[분]) 포함.
+// [파일] GOLD(GCZ26) 분봉(1안) | v5.24(수정시 버전+이력 필수 갱신)
+// [2026-10-01][v5.24 - 이어받기 결과 알림] 순환 끝에 프레임별 실시간 이어받기(LIVE_SEED) 성공/실패를 한 줄(LIVE_SEED_SUMMARY)로 모아 보냄 -> 브릿지/대시보드가 알림 1건으로 표시. 골드 시험판. v5.23(이어받기), v5.22(저품질이관 묶음 등) 포함.
 // [2026-09-30][v5.17 - 차트봉 카운트를 단일 기준값으로 통일] 사용자 실측: 알림의 차트 카운트(1160/327/1263)가 실제 차트(1162/330/1280)와 0.2~1.3% 내로 일치,
 //   실시간이 센 값(82/277/1060)은 크게 어긋남 -> 차트 완결봉 수(마지막 봉/filled 제외)를 모든 기능의 기준값으로 사용.
 //   (1)워밍업 재판정이 창이 신호를 덮을 때 영속 카운터를 차트 기준 봉수로 직접 기록 - 26봉 게이트/판정사유(gate=N/26)/게이트 신뢰성 검사가 같은 값을 봄
@@ -1355,6 +1355,7 @@ SignalCalculator.prototype.onBar = function (high, low, sdate, stime) {
 // 계산기도 "형성 중 봉을 뺀" 상태(cloneForLive)를 실시간에 넘겨서 같은 봉이 두 번 들어가지 않게 한다. 빌더가 만드는 봉 시각도 차트 기준(봉 시작+1초: 실측 00:25:01 등)으로 맞춘다.
 // 못 이어받으면(형성 중 봉이 현재 버킷이 아님 등) 예전처럼 빈 빌더+전체봉 계산기로 동작. LIVE_SEED_ENABLED / LIVE_MINBAR_TIME_CHART_STYLE=false 로 각각 예전 방식 복원.
 // ================================================================================
+var liveSeedPass = {}; // [v5.24] 이번 순환에서 프레임별 이어받기 결과("OK" 또는 실패 사유) - 순환 끝에 한 줄로 알림
 var LIVE_SEED_ENABLED = true;           // false = 워밍업 때 빈 빌더로 재시작(v5.22 이전 방식)
 var LIVE_MINBAR_TIME_CHART_STYLE = true; // false = 봉 시각을 마지막 틱 시각으로(v5.22 이전 방식)
 var MIN_BAR_TIME_OFFSET_SEC_DEFAULT = 1; // 차트 분봉 시각 = 봉 시작 + 1초(실측). 워밍업 응답마다 차트 값에서 다시 학습
@@ -2522,6 +2523,18 @@ function processNext() {
                 } catch (eDeg) {}
                 degradedNewThisPass = [];
             }
+            // [신규][2026-10-01][v5.24] 이번 순환의 실시간 이어받기(LIVE_SEED) 결과를 한 줄로 모아 대시보드 알림용으로 보낸다(프레임마다 진단로그를 볼 필요 없게).
+            // 형식: item,첫프레임라벨,LIVE_SEED_SUMMARY,date,time,총수,성공수,실패수,실패라벨:사유|실패라벨:사유...,순환번호
+            try {
+                var _sdKeys = Object.keys(liveSeedPass), _sdOk = 0, _sdFail = [];
+                for (var _si = 0; _si < _sdKeys.length; _si++) { var _sv = liveSeedPass[_sdKeys[_si]]; if (_sv === "OK") _sdOk++; else _sdFail.push(_sdKeys[_si] + ":" + _sv); }
+                if (_sdKeys.length > 0) {
+                    var _sdWhen = nowServerTimeStr().split(" ");
+                    var _sdList = _sdFail.length > 40 ? _sdFail.slice(0, 40).join("|") + "|...외" + (_sdFail.length - 40) + "건" : _sdFail.join("|");
+                    timedPrintOnFile(OUTPUT_FILE, (currentItemName || INSTRUMENT_NAME) + "," + _sdKeys[0] + ",LIVE_SEED_SUMMARY," + _sdWhen[0] + "," + _sdWhen[1] + "," + _sdKeys.length + "," + _sdOk + "," + _sdFail.length + "," + _sdList + "," + totalPassesCompleted + "\n");
+                }
+            } catch (eSd) {}
+            liveSeedPass = {};
             targetList = baseTargetList; // [2026-09-02][재시도보완] 재시도로 늘어났던 targetList를 원래 110개로 복원
             completedCycles = {};
             filledCycles = {}; // [2026-09-25 신규] 새 순환 시작이니 실제채움 카운터도 같이 초기화
@@ -2857,6 +2870,7 @@ function Main_OnRcvChartEx(chartEx) {
         if (_seedM.ok && calcBase) _rsM.seeded = (_rsM.seeded || 0) + 1; else _rsM.seedFail = (_rsM.seedFail || 0) + 1;
         logDiagnostic("[DIAG][LIVE_SEED] label=" + thisFileLabel + " " + ((_seedM.ok && calcBase) ? "OK" : "FAIL " + (_seedM.why || "no_calcBase")));
         liveBuilders[thisFileLabel] = _nbMin;
+        liveSeedPass[thisFileLabel] = (_seedM.ok && calcBase) ? "OK" : (_seedM.why || "no_calcBase");
         delete degradedPeriods[thisFileLabel]; // [2026-09-02][재시도보완] 실제 성공했으니 저품질 표시 해제
         // [제거][사용자 요청][철회기능 전체 제거] findClosestCalcDiag/computeRetractionMargin/formatRetractionJudge 삭제됨(사용처 없어짐)
 

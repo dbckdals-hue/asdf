@@ -551,6 +551,31 @@ def _gate_sync_int(kv, key):
         return int(kv.get(key, "0"))
     except ValueError:
         return 0
+_LIVE_SEED_WHY_KR = {
+    "log_short": "틱 로그 부족(막 시작함)",
+    "not_found": "실시간 틱이 차트와 안 맞음",
+    "few_bars": "차트 봉 부족",
+    "bucket_mismatch": "형성 중 봉이 현재 구간 아님",
+    "no_calcBase": "계산기 복사 실패",
+    "disabled": "이어받기 꺼짐",
+    "fail": "원인 미상",
+}
+def compose_live_seed_reason(total, ok, fail, fail_items, pass_no):
+    suffix = f" ({pass_no}번째 순환)" if pass_no else ""
+    try:
+        nfail = int(fail)
+    except ValueError:
+        nfail = 0
+    if nfail <= 0:
+        return f"{total}개 프레임 전부 이어받기 성공{suffix}"
+    bits = []
+    for it in fail_items:
+        if ":" in it:
+            lab, why = it.split(":", 1)
+            bits.append(f"{lab}({_LIVE_SEED_WHY_KR.get(why, why)})")
+        else:
+            bits.append(it)
+    return f"{total}개 중 성공 {ok} / 실패 {fail} - " + ", ".join(bits) + suffix
 def compose_gate_sync_reason(sig_kind, live, chart, cause, detail):
     kv = _gate_sync_kv(detail)
     try:
@@ -667,6 +692,17 @@ def parse_line(line):
                 result["reason"] = parts[5] + "건 - " + ", ".join(labels) + " (재시도=" + parts[6] + "회 소진 - 다음 순환으로 이관)"
             elif len(parts) >= 7:
                 result["reason"] = "주기=" + parts[5] + " 재시도=" + parts[6] + "회 소진 - 다음 순환으로 이관"
+        elif result["kind"] == "LIVE_SEED_SUMMARY":
+            # [신규][2026-10-01][스크립트 v5.24] 순환 끝에 한 줄로 오는 "실시간 이어받기" 결과. 형식:
+            # item,첫라벨,LIVE_SEED_SUMMARY,date,time,총수,성공수,실패수,라벨:사유|라벨:사유...,순환번호
+            if len(parts) >= 8:
+                fail_items = [x for x in (parts[8] if len(parts) >= 9 else "").split("|") if x]
+                result["seedTotal"] = parts[5]
+                result["seedOk"] = parts[6]
+                result["seedFail"] = parts[7]
+                result["seedPass"] = parts[9] if len(parts) >= 10 else ""
+                result["seedFailList"] = fail_items
+                result["reason"] = compose_live_seed_reason(parts[5], parts[6], parts[7], fail_items, result["seedPass"])
         elif result["kind"] == "GATE_COUNT_SYNC":
             # [신규][2026-09-30] 형식: item,tf,GATE_COUNT_SYNC,date,time,신호종류,실시간카운터,차트카운터,원인코드,상세(key=value|...)
             if len(parts) >= 9:
@@ -1023,7 +1059,7 @@ def purge_file(path, days, keep_pending):
 
         item, label, kind, date, time_, price = p[0], p[1], p[2], p[3], p[4], p[5]
 
-        if kind in ("HEARTBEAT", "REMOVAL_LOG", "GATE_COUNT_SYNC"):
+        if kind in ("HEARTBEAT", "REMOVAL_LOG", "GATE_COUNT_SYNC", "LIVE_SEED_SUMMARY"):
             # [2026-08-04 추가] REMOVAL_LOG는 실제 매매신호가 아니라 감사용
             # 백업 로그라서, HEARTBEAT와 동일하게 "나이"만으로 지운다.
             # resolved_keys(달성/무효/철회 매칭) 로직에 섞이면, RESET_WIPED
@@ -1425,7 +1461,7 @@ async def tail_loop():
                 existing_content = fh.read()
             for line in existing_content.splitlines():
                 parsed = parse_line(line)
-                if parsed and parsed["kind"] not in ("HEARTBEAT", "STATUS_ACHIEVED", "STATUS_INVALID", "GAP_CHECK", "STATS_IMMEDIATE", "PRETTY2_CONFIRMED", "GATE_COUNT_SYNC"):
+                if parsed and parsed["kind"] not in ("HEARTBEAT", "STATUS_ACHIEVED", "STATUS_INVALID", "GAP_CHECK", "STATS_IMMEDIATE", "PRETTY2_CONFIRMED", "GATE_COUNT_SYNC", "LIVE_SEED_SUMMARY"):
                     is_duplicate_signal(parsed)
                     primed_total += 1
             _set_pos(f["path"], os.path.getsize(f["path"]))
@@ -1536,7 +1572,7 @@ async def tail_loop():
                                             "STALL_ALERT", "STALL_RECOVERED", "WRITE_FAILURE_ALERT", "PENDING_MISMATCH_ALERT",
                                             "UNEXPLAINED_REMOVAL_ALERT", "EXCEL_RESTORE_FAILURE_ALERT", "REGISTERED",
                                             "SCRIPT_STARTED", "BAR_DATA_UNSTABLE_ALERT", "DEGRADED_DEFERRED",
-                                            "PRETTY2_CONFIRMED", "GATE_COUNT_SYNC")
+                                            "PRETTY2_CONFIRMED", "GATE_COUNT_SYNC", "LIVE_SEED_SUMMARY")
                         if ENABLE_DESKTOP_ALERT and parsed["kind"] not in _NON_ALERT_KINDS:
                             if not is_duplicate_signal(parsed):
                                 if is_recent_signal(parsed["date"]) and should_alert(parsed["item"], parsed["price"]):
