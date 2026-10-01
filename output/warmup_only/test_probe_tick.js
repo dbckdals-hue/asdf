@@ -14,7 +14,7 @@ function run({dropRate=0,origin=17,N=30,seconds=150,tps=3}){
   const ch={GetHigh:(k,i)=>{const b=chartBars[chartBars.length-1-i];return b?b.h:null},GetLow:(k,i)=>{const b=chartBars[chartBars.length-1-i];return b?b.l:null},
     GetSDate:(k,i)=>Number(fmtT(chartBars[chartBars.length-1-i].sec)[0]),GetSTime:(k,i)=>{const [h,m,s]=fmtT(chartBars[chartBars.length-1-i].sec)[1].split(':').map(Number);return (h*10000+m*100+s)*10000},GetIndicatorData:()=>N};
   const ctx={Date:class extends Date{constructor(...a){a.length?super(...a):super(now)}static now(){return now}},Math,Number,Array,isFinite,console,CHART_PERIOD_TICK:1,CHART_REQCOUNT_BAR:1,ReqChartItem:function(){},IndicatorInfo:function(){},
-    Main:{MessageLog:m=>logs.push(m),ReqMarketData(){},SetTimer:(i,m)=>t[i]=now+m,KillTimer:i=>delete t[i],RemoveObject(){},ReqChartEx(){setTimeout(()=>{},0);ctx.__pending=true;return true}}};
+    Main:{PrintOnFile(){},MessageLog:m=>logs.push(m),ReqMarketData(){},SetTimer:(i,m)=>t[i]=now+m,KillTimer:i=>delete t[i],RemoveObject(){},ReqChartEx(){setTimeout(()=>{},0);ctx.__pending=true;return true}}};
   vm.createContext(ctx);vm.runInContext(code.replace(/var CYCLE = \d+;/,'var CYCLE = '+N+';'),ctx);ctx.Main_OnStart();
   // 실시간 틱 공급: 수집구간 틱만, dropRate 만큼 누락
   let rnd=12345;const rr=()=>{rnd=(rnd*1664525+1013904223)%4294967296;return rnd/4294967296};

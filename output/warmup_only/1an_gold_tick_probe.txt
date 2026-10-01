@@ -15,7 +15,10 @@ var TIMEOUT_MS = 20000;
 var MAX_TICKS = 60000;
 
 var ticks = [], waiting = false, pendingRemove = [], startMs = 0;
-function logMsg(m) { Main.MessageLog("[GOLD 틱정렬프로브] " + m); }
+var RESULT_FILE = "C:\\dashboard\\data\\gold_tick_probe_result.txt"; // 결과 요약만 저장(몇 줄)
+var resultBuf = [];
+function logMsg(m) { Main.MessageLog("[GOLD 틱정렬프로브] " + m); resultBuf.push(m); }
+function saveResult() { try { Main.PrintOnFile(RESULT_FILE, resultBuf.join("\n") + "\n"); resultBuf = []; Main.MessageLog("[GOLD 틱정렬프로브] 결과를 파일로 저장: " + RESULT_FILE); } catch (e) { Main.MessageLog("[GOLD 틱정렬프로브] 결과 파일 저장 실패: " + e.message); } }
 function formatTime(rawTime) { var s = ("000000" + Math.floor(rawTime / 10000)).slice(-6); return s.slice(0, 2) + ":" + s.slice(2, 4) + ":" + s.slice(4, 6); }
 function parseDateField(rawDate) { if (!rawDate || rawDate === 0) { var now = new Date(); return now.getFullYear() + ("0" + (now.getMonth() + 1)).slice(-2) + ("0" + now.getDate()).slice(-2); } return String(rawDate); }
 function parseTimeField(rawTime) { if (rawTime === null || rawTime === undefined) return null; var n = Number(rawTime); if (n > 240000) n = Math.floor(n / 10000); var s = ("000000" + n).slice(-6); return s.slice(0, 2) + ":" + s.slice(2, 4) + ":" + s.slice(4, 6); }
@@ -35,6 +38,7 @@ function Main_OnStart() {
     startMs = Date.now();
     try { Main.ReqMarketData(MARKET_DATA_CODE, 0); logMsg("시세구독 시작 - " + COLLECT_SEC + "초 동안 틱 수집 후 " + CYCLE + "틱 차트와 비교합니다(약 " + Math.round(COLLECT_SEC / 60 + 0.5) + "분)"); } catch (e) { logMsg("시세구독 실패: " + e.message); }
     Main.SetTimer(1, COLLECT_SEC * 1000);
+    Main.SetTimer(3, 30000);
 }
 function sendChart() {
     try {
@@ -93,9 +97,11 @@ function analyze(ch) {
     else if (rate >= 0.5 && rate - median >= 0.2) logMsg("판정: 부분 일치(" + (rate * 100).toFixed(1) + "%) -> 실시간 틱이 차트 틱과 일부 다름(누락/합쳐짐). 정확한 이어붙이기는 불가");
     else logMsg("판정: 일치 거의 없음(" + (rate * 100).toFixed(1) + "%) -> 실시간 틱으로는 차트 틱봉을 재현할 수 없음");
     logMsg("끝");
+    saveResult();
 }
 function Main_OnTimer(id) {
-    if (id == 1) { Main.KillTimer(1); sendChart(); }
-    else if (id == 2) { Main.KillTimer(2); if (waiting) { waiting = false; logMsg("차트 응답 타임아웃"); } }
+    if (id == 1) { Main.KillTimer(1); Main.KillTimer(3); sendChart(); }
+    else if (id == 2) { Main.KillTimer(2); if (waiting) { waiting = false; logMsg("차트 응답 타임아웃"); saveResult(); } }
+    else if (id == 3) { Main.SetTimer(3, 30000); logMsg("수집 중... 경과 " + Math.round((Date.now() - startMs) / 1000) + "초 / " + COLLECT_SEC + "초, 지금까지 틱 " + ticks.length + "개" + (ticks.length === 0 ? " (틱이 0개면 시세구독이 안 되는 것)" : "")); }
     else if (id == 5) { Main.KillTimer(5); var l = pendingRemove; pendingRemove = []; for (var i = 0; i < l.length; i++) { try { Main.RemoveObject(l[i]); } catch (e) {} } }
 }
