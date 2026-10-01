@@ -14,7 +14,7 @@ var CHART_COUNT = 200;    // 차트에서 받을 봉 수
 var TIMEOUT_MS = 20000;
 var MAX_TICKS = 60000;
 
-var ticks = [], waiting = false, pendingRemove = [], startMs = 0, lastProg = -1;
+var earlyReq = false, ticks = [], waiting = false, pendingRemove = [], startMs = 0, lastProg = -1;
 var RESULT_FILE = "C:\\dashboard\\data\\nasdaq_tick_probe_result.txt"; // 결과 요약만 저장(몇 줄)
 var resultBuf = [];
 function logMsg(m) { Main.MessageLog("[NASDAQ100 틱정렬프로브] " + m); resultBuf.push(m); }
@@ -47,10 +47,19 @@ function cbSummary() {
 function Main_OnStart() {
     for (var k = 1; k <= 10; k++) { try { Main.KillTimer(k); } catch (e) {} }
     startMs = Date.now();
-    logMsg("스크립트 시작됨 (v3: 시세콜백 진단) - 이전 프로브가 돌고 있으면 먼저 정지하세요");
+    logMsg("스크립트 시작됨 (v4: 구독 직후 차트요청 포함) - 이전 프로브가 돌고 있으면 먼저 정지하세요");
     try { Main.PrintOnFile(RESULT_FILE, "[시작] 틱정렬프로브 시작 - 결과는 끝나면 이 파일에 이어서 저장됩니다\n"); } catch (eF) { logMsg("시작 파일 쓰기 실패: " + eF.message); }
-    try { Main.ReqMarketData(MARKET_DATA_CODE, 0); logMsg("시세구독 시작 - " + COLLECT_SEC + "초 동안 틱 수집 후 " + CYCLE + "틱 차트와 비교합니다(약 " + Math.round(COLLECT_SEC / 60 + 0.5) + "분)"); } catch (e) { logMsg("시세구독 실패: " + e.message); }
+    try { var rm = Main.ReqMarketData(MARKET_DATA_CODE, 0); logMsg("ReqMarketData 반환값=" + rm); logMsg("시세구독 시작 - " + COLLECT_SEC + "초 동안 틱 수집 후 " + CYCLE + "틱 차트와 비교합니다(약 " + Math.round(COLLECT_SEC / 60 + 0.5) + "분)"); } catch (e) { logMsg("시세구독 실패: " + e.message); }
+    earlyReq = true; Main.SetTimer(4, 500); // 기존 스크립트처럼 구독 직후 차트 요청을 하나 보냄
     Main.SetTimer(3, 1000);
+}
+function sendEarly() {
+    try {
+        var req = new ReqChartItem(MARKET_DATA_CODE, CYCLE, CHART_PERIOD_TICK, 20, CHART_REQCOUNT_BAR);
+        var ok = Main.ReqChartEx(req, null, new Array(new IndicatorInfo("#주기")));
+        logMsg("초기 차트요청(기존 스크립트와 같은 순서) 보냄 (반환=" + ok + ")");
+        if (!ok) earlyReq = false;
+    } catch (e) { earlyReq = false; logMsg("초기 차트요청 예외: " + e.message); }
 }
 function sendChart() {
     try {
@@ -63,6 +72,7 @@ function sendChart() {
 }
 function Main_OnRcvChartEx(chartEx) {
     pendingRemove.push(chartEx); Main.SetTimer(5, 300);
+    if (earlyReq) { earlyReq = false; logMsg("초기 차트응답 도착 - 이후 시세콜백이 오는지 아래 줄에서 확인"); return; }
     if (!waiting) { logMsg("지각응답 무시"); return; }
     waiting = false; Main.KillTimer(2);
     try { analyze(chartEx); } catch (e) { logMsg("분석 예외: " + e.message); }
@@ -120,5 +130,6 @@ function Main_OnTimer(id) {
         Main.SetTimer(3, 1000);
         if (el % 10 === 0 && el !== lastProg) { lastProg = el; logMsg("수집 중... 경과 " + el + "초 / " + COLLECT_SEC + "초, 지금까지 틱 " + ticks.length + "개" + (ticks.length === 0 ? " | " + cbSummary() : "")); }
     }
+    else if (id == 4) { Main.KillTimer(4); sendEarly(); }
     else if (id == 5) { Main.KillTimer(5); var l = pendingRemove; pendingRemove = []; for (var i = 0; i < l.length; i++) { try { Main.RemoveObject(l[i]); } catch (e) {} } }
 }
