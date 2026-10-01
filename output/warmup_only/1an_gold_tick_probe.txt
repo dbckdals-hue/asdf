@@ -9,7 +9,9 @@
 // ================================================================================
 var MARKET_DATA_CODE = "GCZ26";
 var CYCLE = 30;           // 검증할 틱봉 주기 (작을수록 짧은 시간에 비교할 봉이 많아짐)
-var COLLECT_SEC = 150;    // 틱 수집 시간(초). 약 3분이면 끝남 (틱이 적은 시간대면 늘리세요)
+var COLLECT_SEC = 120;    // 최소 수집 시간(초)
+var MIN_TICKS = 330;      // 이만큼(30틱봉 약 11개) 틱이 모일 때까지 계속 수집 (틱이 빠른 시간대는 2분, 느리면 더 걸림)
+var MAX_SEC = 720;        // 아무리 느려도 이 시간(초)에는 끝냄
 var CHART_COUNT = 200;    // 차트에서 받을 봉 수
 var TIMEOUT_MS = 20000;
 var MAX_TICKS = 60000;
@@ -53,7 +55,7 @@ function Main_OnStart() {
     startMs = Date.now();
     logMsg("스크립트 시작됨 (v5: updateID별 집계+필드 덤프) - 이전 프로브가 돌고 있으면 먼저 정지하세요");
     try { Main.PrintOnFile(RESULT_FILE, "[시작] 틱정렬프로브 시작 - 결과는 끝나면 이 파일에 이어서 저장됩니다\n"); } catch (eF) { logMsg("시작 파일 쓰기 실패: " + eF.message); }
-    try { var rm = Main.ReqMarketData(MARKET_DATA_CODE, 0); logMsg("ReqMarketData 반환값=" + rm); logMsg("시세구독 시작 - " + COLLECT_SEC + "초 동안 틱 수집 후 " + CYCLE + "틱 차트와 비교합니다(약 " + Math.round(COLLECT_SEC / 60 + 0.5) + "분)"); } catch (e) { logMsg("시세구독 실패: " + e.message); }
+    try { var rm = Main.ReqMarketData(MARKET_DATA_CODE, 0); logMsg("ReqMarketData 반환값=" + rm); logMsg("시세구독 시작 - 틱이 " + MIN_TICKS + "개 모일 때까지 수집한 뒤 " + CYCLE + "틱 차트와 비교합니다"); } catch (e) { logMsg("시세구독 실패: " + e.message); }
     earlyReq = true; Main.SetTimer(4, 500); // 기존 스크립트처럼 구독 직후 차트 요청을 하나 보냄
     Main.SetTimer(3, 1000);
 }
@@ -99,7 +101,7 @@ function analyze(ch) {
     var chartBarsInRange = 0;
     for (var c = 0; c < chartList.length; c++) { if (chartList[c].split("|")[0] > firstTickKey) chartBarsInRange++; }
     logMsg("수신틱 " + ticks.length + "개 / 같은 구간 차트 완결봉 " + chartBarsInRange + "개 x " + CYCLE + " = " + (chartBarsInRange * CYCLE) + "틱 (비율 " + (chartBarsInRange ? (ticks.length / (chartBarsInRange * CYCLE) * 100).toFixed(1) : "?") + "%)");
-    if (ticks.length < CYCLE * 5) { logMsg("판정 불가: 수집한 틱이 " + ticks.length + "개뿐(" + (CYCLE * 5) + "개 미만) - COLLECT_SEC를 늘려서 다시 실행하세요"); return; }
+    if (ticks.length < CYCLE * 5) { logMsg("판정 불가: 수집한 틱이 " + ticks.length + "개뿐(" + (CYCLE * 5) + "개 미만) - MAX_SEC를 늘려서 다시 실행하세요"); saveResult(); return; }
     // offset별 일치 검사
     var results = [];
     for (var o = 0; o < CYCLE; o++) {
@@ -130,9 +132,9 @@ function Main_OnTimer(id) {
     else if (id == 2) { Main.KillTimer(2); if (waiting) { waiting = false; logMsg("차트 응답 타임아웃"); saveResult(); } }
     else if (id == 3) {
         var el = Math.round((Date.now() - startMs) / 1000);
-        if (el >= COLLECT_SEC) { Main.KillTimer(3); sendChart(); return; }
+        if ((el >= COLLECT_SEC && ticks.length >= MIN_TICKS) || el >= MAX_SEC) { Main.KillTimer(3); sendChart(); return; }
         Main.SetTimer(3, 1000);
-        if (el % 10 === 0 && el !== lastProg) { lastProg = el; logMsg("수집 중... 경과 " + el + "초 / " + COLLECT_SEC + "초, 지금까지 틱 " + ticks.length + "개" + " | " + cbSummary()); }
+        if (el % 10 === 0 && el !== lastProg) { lastProg = el; logMsg("수집 중... 경과 " + el + "초, 틱 " + ticks.length + "/" + MIN_TICKS + "개 모이면 비교 시작(최소 " + COLLECT_SEC + "초, 최대 " + MAX_SEC + "초) - 지금까지 틱 " + ticks.length + "개" + " | " + cbSummary()); }
     }
     else if (id == 4) { Main.KillTimer(4); sendEarly(); }
     else if (id == 5) { Main.KillTimer(5); var l = pendingRemove; pendingRemove = []; for (var i = 0; i < l.length; i++) { try { Main.RemoveObject(l[i]); } catch (e) {} } }
