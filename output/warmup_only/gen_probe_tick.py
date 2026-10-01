@@ -26,9 +26,13 @@ function parseTimeField(rawTime) { if (rawTime === null || rawTime === undefined
 var marketDataObj = null;
 var rcvCount = 0;
 function Main_OnRcvMarketData(MarketData) { rcvCount++; marketDataObj = MarketData; }
+var byUpd = {}, dumped = {};
+function dumpFields(o) { var out = [], n = 0; try { for (var k in o) { if (n >= 24) break; var v = o[k]; if (typeof v === "function") continue; out.push(k + "=" + v); n++; } } catch (e) { out.push("(필드열거 실패:" + e.message + ")"); } return out.join(", "); }
 var cb = { total: 0, noObj: 0, badCode: 0, badUpd: 0, badPrice: 0, badTime: 0, seen: {}, seenN: 0, lastRaw: "" };
 function Main_OnUpdateMarket(itemcode, updateID, exchangeKind) {
     cb.total++;
+    byUpd[updateID] = (byUpd[updateID] || 0) + 1;
+    if (!dumped[updateID] && marketDataObj) { dumped[updateID] = true; logMsg("첫 이벤트 updateID=" + updateID + " 코드=" + itemcode + " | 시세객체: " + dumpFields(marketDataObj)); }
     var sk = itemcode + "/" + updateID;
     if (!cb.seen[sk] && cb.seenN < 6) { cb.seen[sk] = 1; cb.seenN++; }
     if (!marketDataObj) { cb.noObj++; return; }
@@ -42,12 +46,12 @@ function Main_OnUpdateMarket(itemcode, updateID, exchangeKind) {
 }
 function cbSummary() {
     var keys = []; for (var k in cb.seen) keys.push(k);
-    return "시세콜백 " + cb.total + "회(시세객체없음 " + cb.noObj + ", 코드불일치 " + cb.badCode + ", updateID불일치 " + cb.badUpd + ", 가격이상 " + cb.badPrice + ", 시각이상 " + cb.badTime + ") 받은 코드/updateID: " + (keys.join(" , ") || "없음") + (cb.lastRaw ? " / 시각이상 예: " + cb.lastRaw : "") + " / 시세객체수신 " + (rcvCount) + "회";
+    return "시세콜백 " + cb.total + "회(시세객체없음 " + cb.noObj + ", 코드불일치 " + cb.badCode + ", updateID불일치 " + cb.badUpd + ", 가격이상 " + cb.badPrice + ", 시각이상 " + cb.badTime + ") 받은 코드/updateID: " + (keys.join(" , ") || "없음") + (cb.lastRaw ? " / 시각이상 예: " + cb.lastRaw : "") + " / 시세객체수신 " + (rcvCount) + "회 / updateID별 횟수: " + (function () { var a = []; for (var u in byUpd) a.push(u + "=" + byUpd[u]); return a.join(", ") || "없음"; })();
 }
 function Main_OnStart() {
     for (var k = 1; k <= 10; k++) { try { Main.KillTimer(k); } catch (e) {} }
     startMs = Date.now();
-    logMsg("스크립트 시작됨 (v4: 구독 직후 차트요청 포함) - 이전 프로브가 돌고 있으면 먼저 정지하세요");
+    logMsg("스크립트 시작됨 (v5: updateID별 집계+필드 덤프) - 이전 프로브가 돌고 있으면 먼저 정지하세요");
     try { Main.PrintOnFile(RESULT_FILE, "[시작] 틱정렬프로브 시작 - 결과는 끝나면 이 파일에 이어서 저장됩니다\n"); } catch (eF) { logMsg("시작 파일 쓰기 실패: " + eF.message); }
     try { var rm = Main.ReqMarketData(MARKET_DATA_CODE, 0); logMsg("ReqMarketData 반환값=" + rm); logMsg("시세구독 시작 - " + COLLECT_SEC + "초 동안 틱 수집 후 " + CYCLE + "틱 차트와 비교합니다(약 " + Math.round(COLLECT_SEC / 60 + 0.5) + "분)"); } catch (e) { logMsg("시세구독 실패: " + e.message); }
     earlyReq = true; Main.SetTimer(4, 500); // 기존 스크립트처럼 구독 직후 차트 요청을 하나 보냄
@@ -128,7 +132,7 @@ function Main_OnTimer(id) {
         var el = Math.round((Date.now() - startMs) / 1000);
         if (el >= COLLECT_SEC) { Main.KillTimer(3); sendChart(); return; }
         Main.SetTimer(3, 1000);
-        if (el % 10 === 0 && el !== lastProg) { lastProg = el; logMsg("수집 중... 경과 " + el + "초 / " + COLLECT_SEC + "초, 지금까지 틱 " + ticks.length + "개" + (ticks.length === 0 ? " | " + cbSummary() : "")); }
+        if (el % 10 === 0 && el !== lastProg) { lastProg = el; logMsg("수집 중... 경과 " + el + "초 / " + COLLECT_SEC + "초, 지금까지 틱 " + ticks.length + "개" + " | " + cbSummary()); }
     }
     else if (id == 4) { Main.KillTimer(4); sendEarly(); }
     else if (id == 5) { Main.KillTimer(5); var l = pendingRemove; pendingRemove = []; for (var i = 0; i < l.length; i++) { try { Main.RemoveObject(l[i]); } catch (e) {} } }
