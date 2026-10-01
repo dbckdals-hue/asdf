@@ -53,7 +53,7 @@ function cbSummary() {
 function Main_OnStart() {
     for (var k = 1; k <= 10; k++) { try { Main.KillTimer(k); } catch (e) {} }
     startMs = Date.now();
-    logMsg("스크립트 시작됨 (v5: updateID별 집계+필드 덤프) - 이전 프로브가 돌고 있으면 먼저 정지하세요");
+    logMsg("스크립트 시작됨 (v7: 시각 없이 고저 순서로 비교) - 이전 프로브가 돌고 있으면 먼저 정지하세요");
     try { Main.PrintOnFile(RESULT_FILE, "[시작] 틱정렬프로브 시작 - 결과는 끝나면 이 파일에 이어서 저장됩니다\n"); } catch (eF) { logMsg("시작 파일 쓰기 실패: " + eF.message); }
     try { var rm = Main.ReqMarketData(MARKET_DATA_CODE, 0); logMsg("ReqMarketData 반환값=" + rm); logMsg("시세구독 시작 - 틱이 " + MIN_TICKS + "개 모일 때까지 수집한 뒤 " + CYCLE + "틱 차트와 비교합니다"); } catch (e) { logMsg("시세구독 실패: " + e.message); }
     earlyReq = true; Main.SetTimer(4, 500); // 기존 스크립트처럼 구독 직후 차트 요청을 하나 보냄
@@ -90,38 +90,43 @@ function analyze(ch) {
     var ind = null; try { ind = ch.GetIndicatorData("#주기", 2, 0); } catch (e) {}
     logMsg("차트 수신 " + n + "봉, #주기=" + ind + " (요청 " + CYCLE + ")");
     // 최근 5봉 출력 (idx0 = 형성중인 마지막 봉)
-    // 차트 완결봉(idx>=1)을 시각|고|저 키로 저장
-    var map = {}, chartList = [];
-    for (var i = n - 1; i >= 1; i--) {
-        var key = ch.GetSDate(1, i) + " " + formatTime(ch.GetSTime(1, i)) + "|" + Number(ch.GetHigh(1, i)) + "|" + Number(ch.GetLow(1, i));
-        map[key] = true; chartList.push(key);
-    }
+    // 차트 완결봉(idx>=1)을 오래된 것부터 (시각, 고, 저)로 저장
+    var chartList = [];
+    for (var i = n - 1; i >= 1; i--) chartList.push({ t: ch.GetSDate(1, i) + " " + formatTime(ch.GetSTime(1, i)), h: Number(ch.GetHigh(1, i)), l: Number(ch.GetLow(1, i)) });
     var firstTickKey = ticks.length ? (ticks[0].d + " " + ticks[0].t) : "";
-    // 수신틱 수 vs 차트 틱 수: 첫 틱 이후의 차트 완결봉 수 x CYCLE
     var chartBarsInRange = 0;
-    for (var c = 0; c < chartList.length; c++) { if (chartList[c].split("|")[0] > firstTickKey) chartBarsInRange++; }
+    for (var c = 0; c < chartList.length; c++) { if (chartList[c].t > firstTickKey) chartBarsInRange++; }
     logMsg("수신틱 " + ticks.length + "개 / 같은 구간 차트 완결봉 " + chartBarsInRange + "개 x " + CYCLE + " = " + (chartBarsInRange * CYCLE) + "틱 (비율 " + (chartBarsInRange ? (ticks.length / (chartBarsInRange * CYCLE) * 100).toFixed(1) : "?") + "%)");
     if (ticks.length < CYCLE * 5) { logMsg("판정 불가: 수집한 틱이 " + ticks.length + "개뿐(" + (CYCLE * 5) + "개 미만) - MAX_SEC를 늘려서 다시 실행하세요"); saveResult(); return; }
-    // offset별 일치 검사
+    // [v7] 시각은 비교에 쓰지 않는다(차트 봉 시각이 첫 틱/마지막 틱 어느 쪽 기준인지 모르므로).
+    // offset(0..CYCLE-1)별로 틱을 CYCLE개씩 묶어 만든 봉 열의 (고,저) 순서가, 차트 완결봉 열의 어느 위치(shift)에서 연속으로 일치하는지 찾는다.
     var results = [];
     for (var o = 0; o < CYCLE; o++) {
-        var total = 0, hit = 0;
-        for (var j = o; j + CYCLE <= ticks.length; j += CYCLE) {
-            var h = -1e18, l = 1e18;
-            for (var q = j; q < j + CYCLE; q++) { if (ticks[q].p > h) h = ticks[q].p; if (ticks[q].p < l) l = ticks[q].p; }
-            var last = ticks[j + CYCLE - 1];
-            total++;
-            if (map[last.d + " " + last.t + "|" + h + "|" + l]) hit++;
+        var own = [];
+        for (var jj = o; jj + CYCLE <= ticks.length; jj += CYCLE) {
+            var hh = -1e18, ll = 1e18;
+            for (var q = jj; q < jj + CYCLE; q++) { if (ticks[q].p > hh) hh = ticks[q].p; if (ticks[q].p < ll) ll = ticks[q].p; }
+            own.push({ h: hh, l: ll, t0: ticks[jj].t, t1: ticks[jj + CYCLE - 1].t });
         }
-        results.push({ o: o, hit: hit, total: total });
+        var bestHit = 0, bestShift = -1;
+        for (var sh = 0; sh + own.length <= chartList.length; sh++) {
+            var hit = 0;
+            for (var k = 0; k < own.length; k++) { if (chartList[sh + k].h === own[k].h && chartList[sh + k].l === own[k].l) hit++; }
+            if (hit > bestHit) { bestHit = hit; bestShift = sh; }
+        }
+        results.push({ o: o, hit: bestHit, total: own.length, shift: bestShift, own: own });
     }
     var rates = results.map(function (x) { return x.total ? x.hit / x.total : 0; }).sort(function (a, b) { return a - b; });
     var median = rates[Math.floor(rates.length / 2)];
     results.sort(function (a, b) { return b.hit - a.hit; });
     var best = results[0], rate = best.total ? best.hit / best.total : 0;
     var ties = []; for (var r = 0; r < results.length; r++) { if (results[r].hit === best.hit) ties.push(results[r].o); }
-    logMsg("가장 잘 맞는 offset " + ties.slice(0, 6).join(",") + (ties.length > 6 ? "..." : "") + ": 일치 " + best.hit + "/" + best.total + " (" + (rate * 100).toFixed(1) + "%), 다른 offset 중앙값 " + (median * 100).toFixed(1) + "%");
-    if (rate >= 0.9 && rate - median >= 0.3) logMsg("판정: 실시간 틱 = 차트 틱 (일치율 " + (rate * 100).toFixed(1) + "%) -> 시작 위치(offset)만 맞추면 정확히 이어붙일 수 있음" + (ties.length > 1 ? " (같은 초에 틱이 여러 개라 offset 후보 " + ties.length + "개 - 더 많은 봉으로 좁히면 됨)" : ""));
+    logMsg("가장 잘 맞는 offset " + ties.slice(0, 6).join(",") + (ties.length > 6 ? "..." : "") + ": 연속 일치 " + best.hit + "/" + best.total + " (" + (rate * 100).toFixed(1) + "%), 다른 offset 중앙값 " + (median * 100).toFixed(1) + "%");
+    if (best.shift >= 0 && best.hit > 0) {
+        var cm = chartList[best.shift], om = best.own[0];
+        logMsg("   봉 시각 비교(가장 잘 맞은 위치의 첫 봉): 차트 " + cm.t + " / 내 봉 첫틱 " + om.t0 + " ~ 끝틱 " + om.t1 + " (차트 시각이 첫틱 기준인지 끝틱 기준인지 확인용)");
+    }
+    if (rate >= 0.9 && rate - median >= 0.3) logMsg("판정: 실시간 틱 = 차트 틱 (일치율 " + (rate * 100).toFixed(1) + "%) -> 시작 위치(offset)만 맞추면 정확히 이어붙일 수 있음" + (ties.length > 1 ? " (후보 " + ties.length + "개)" : ""));
     else if (rate >= 0.5 && rate - median >= 0.2) logMsg("판정: 부분 일치(" + (rate * 100).toFixed(1) + "%) -> 실시간 틱이 차트 틱과 일부 다름(누락/합쳐짐). 정확한 이어붙이기는 불가");
     else logMsg("판정: 일치 거의 없음(" + (rate * 100).toFixed(1) + "%) -> 실시간 틱으로는 차트 틱봉을 재현할 수 없음");
     logMsg("끝");

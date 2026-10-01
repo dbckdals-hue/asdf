@@ -2,7 +2,7 @@
 const vm=require('vm'),fs=require('fs');
 let now=1e12,t={},logs=[],files=[],pend=false;
 const D=Date.UTC(2026,9,1,12,0,0)/1000;const fmtT=s=>{const d=new Date(s*1000);return [d.toISOString().slice(0,10).replace(/-/g,''),d.toISOString().slice(11,19)]};
-const N=30,all=[];let px=4200;for(let i=0;i<5000;i++){px+=((i*7919)%7-3)*0.1;all.push({p:Math.round(px*10)/10,sec:D+Math.floor(i/3)})}
+const N=30,all=[];let px=4200,rs=777;for(let i=0;i<5000;i++){rs=(rs*1664525+1013904223)%4294967296;px+=(Math.floor(rs/4294967296*9)-4)*0.1;all.push({p:Math.round(px*10)/10,sec:D+Math.floor(i/3)})}
 const bars=[];for(let j=11;j+N<=all.length;j+=N){let h=-1e18,l=1e18;for(let q=j;q<j+N;q++){h=Math.max(h,all[q].p);l=Math.min(l,all[q].p)}bars.push({h,l,sec:all[j+N-1].sec})}bars.push({h:1,l:1,sec:all[all.length-1].sec});
 const ch={GetHigh:(k,i)=>{const b=bars[bars.length-1-i];return b?b.h:null},GetLow:(k,i)=>{const b=bars[bars.length-1-i];return b?b.l:null},GetSDate:(k,i)=>Number(fmtT(bars[bars.length-1-i].sec)[0]),GetSTime:(k,i)=>{const [h,m,s]=fmtT(bars[bars.length-1-i].sec)[1].split(':').map(Number);return (h*10000+m*100+s)*10000},GetIndicatorData:()=>N};
 const ctx={Date:class extends Date{constructor(...a){a.length?super(...a):super(now)}static now(){return now}},Math,Number,Array,isFinite,CHART_PERIOD_TICK:1,CHART_REQCOUNT_BAR:1,ReqChartItem:function(){},IndicatorInfo:function(){},
