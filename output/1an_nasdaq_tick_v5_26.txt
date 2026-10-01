@@ -1,6 +1,6 @@
 // ================================================================================
-// [파일] GOLD(GCZ26) 틱봉(1안, 5틱단위) | v5.22(수정시 버전+이력 필수 갱신)
-// [2026-10-01][v5.22 - 저품질이관 알림 묶음] 프레임마다 보내던 DEGRADED_DEFERRED 줄을 없애고, 순환 끝(재시도까지 끝난 시점)에 이번 순환에서 새로 저품질이 된 프레임을 한 줄(개수,재시도횟수,라벨1|라벨2|...)로 보냄. 브릿지/대시보드 v5.22와 세트. v5.21(다이아몬드 신기준) 포함.
+// [파일] NASDAQ100(NQZ26) 틱봉(1안, 5틱단위) | v5.26(수정시 버전+이력 필수 갱신)
+// [2026-10-01][v5.26 - 최종 정리] 확인용 진단/알림 제거(카운터 불일치 GATE_COUNT_SYNC 줄·알림, 이어받기 진단파일·결과 알림). 기능은 유지: 실시간 빌더 이어받기(v5.23), 카운터 차트 기준 교정, 저품질이관 묶음 알림(v5.22), 다이아몬드 신기준(v5.21), 타임아웃 재시도(v5.19). 이어받기를 끄려면 LIVE_SEED_ENABLED=false.
 // [2026-09-30][v5.17 - 차트봉 카운트를 단일 기준값으로 통일] 사용자 실측: 알림의 차트 카운트(1160/327/1263)가 실제 차트(1162/330/1280)와 0.2~1.3% 내로 일치,
 //   실시간이 센 값(82/277/1060)은 크게 어긋남 -> 차트 완결봉 수(마지막 봉/filled 제외)를 모든 기능의 기준값으로 사용.
 //   (1)워밍업 재판정이 창이 신호를 덮을 때 영속 카운터를 차트 기준 봉수로 직접 기록 - 26봉 게이트/판정사유(gate=N/26)/게이트 신뢰성 검사가 같은 값을 봄
@@ -502,8 +502,8 @@
 //   이 감시목록을 공유하고, RESET을 false로 바꿔 재시작해도 이어감.
 // ================================================================================
 
-var MARKET_DATA_CODE = "GCZ26"; // [2026-09-25][v5.0] GOLD(GCZ26)에서 SP500용으로 종목코드만 교체 - 실제 예스스팟 코드로 반드시 확인 후 교체
-var INSTRUMENT_NAME = "GOLD"; // 신호파일에 찍히는 종목 표기(itemName)
+var MARKET_DATA_CODE = "NQZ26"; // [2026-09-25][v5.0] GOLD(GCZ26)에서 SP500용으로 종목코드만 교체 - 실제 예스스팟 코드로 반드시 확인 후 교체
+var INSTRUMENT_NAME = "NASDAQ100"; // 신호파일에 찍히는 종목 표기(itemName)
 var CONTRACT_SUFFIX = MARKET_DATA_CODE.slice(-3);
 var INSTRUMENT_TAG = INSTRUMENT_NAME + " " + CONTRACT_SUFFIX;
 // [제거][사용자 요청][철회기능 전체 제거] HOLD_MARGIN_THRESHOLD(_BY_INSTRUMENT) 삭제됨(사용처 없어짐)
@@ -706,7 +706,7 @@ var diagBytesWrittenApprox = 0;
 // [화면에 남기는 것] REMOVE_OBJECT_FAILED/REQUEST_EXCEPTION/
 //   REQUEST_FAILED/BAR_MISMATCH (2안/2+1안엔 추가로 STALL_ALERT/
 //   STALL_RECOVERED/EXCEL_SHARD_LOAD_FAILED)
-var QUIET_DIAG_TAGS = ["[DIAG][REQUEST_TIMEOUT]", "[DIAG][GATE_COUNT_SYNC]", "[DIAG][GATE_COUNT_SYNC_INIT]", "[DIAG][WINDOW_NOT_COVERING]", "[DIAG][ACTUAL_COUNT]", "[DIAG][ADAPTIVE_GAP_DETECTED]", "[DIAG][CYCLE_DONE]", "[DIAG][DEDUP_PRUNE]", "[DIAG][DEGRADED_COLDSTART]", "[DIAG][REQUEST_SENT]", "[DIAG][RESOURCE]"]; // [정리][사용자 요청] REQUEST_TIMEOUT/SIGNAL_CANDIDATE/SIGNAL_CANDIDATE_REJECTED 제거(로그 자체를 없앰)
+var QUIET_DIAG_TAGS = ["[DIAG][REQUEST_TIMEOUT]", "[DIAG][WINDOW_NOT_COVERING]", "[DIAG][ACTUAL_COUNT]", "[DIAG][ADAPTIVE_GAP_DETECTED]", "[DIAG][CYCLE_DONE]", "[DIAG][DEDUP_PRUNE]", "[DIAG][DEGRADED_COLDSTART]", "[DIAG][REQUEST_SENT]", "[DIAG][RESOURCE]"]; // [정리][사용자 요청] REQUEST_TIMEOUT/SIGNAL_CANDIDATE/SIGNAL_CANDIDATE_REJECTED 제거(로그 자체를 없앰)
 function logDiagnostic(msg, curDateStr, curTimeStr) {
     var isQuiet = false;
     for (var qi = 0; qi < QUIET_DIAG_TAGS.length; qi++) { if (msg.indexOf(QUIET_DIAG_TAGS[qi]) === 0) { isQuiet = true; break; } }
@@ -818,7 +818,7 @@ function pruneDedupStructures() {
     if (lastTickEpoch === null) return;
     var cutoff = lastTickEpoch - DEDUP_RETENTION_SEC;
     Object.keys(pretty2Written).forEach(function (k) { if (pretty2Written[k].epoch < cutoff) delete pretty2Written[k]; });
-    var _pkSet = {}; pendingSignals.forEach(function (s) { _pkSet[pkOf(s)] = true; }); Object.keys(gateSyncBase).forEach(function (k) { if (!_pkSet[k]) delete gateSyncBase[k]; });
+    var _pkSet = {}; pendingSignals.forEach(function (s) { _pkSet[pkOf(s)] = true; });
     var removedSeenKeys = 0, removedPriceEntries = 0, removedPriceKeys = 0, removedResolutions = 0, removedOrphaned = 0, removedRealtime = 0;
     Object.keys(seenKeys).forEach(function (k) { if (seenKeys[k] < cutoff) { delete seenKeys[k]; removedSeenKeys++; } });
     Object.keys(seenKeysByPrice).forEach(function (pk) {
@@ -1061,13 +1061,56 @@ function evalRightCloudCases(saHist, sbHist, isBull) {
     if (checkRightCloudCase3_BriefDipTolerant(saHist, sbHist, isBull)) cases.push(3);
     return { matched: cases.length > 0, cases: cases };
 }
-function TickBarBuilder(nTicks) { this.n = nTicks; this.count = 0; this.high = null; this.low = null; this.lastSdate = null; this.lastStime = null; }
+// ================================================================================
+// [신규][2026-10-01][v5.23 실시간 틱봉 빌더 이어받기] 실측(골드 30틱, 630틱): 실시간 틱(updateID 20001)으로 만든 30틱봉 20개가 차트 봉과 20/20 연속 일치했고,
+// 차트 틱봉의 시각은 "봉의 첫 틱 시각"이었다. 그래서 (1)최근 틱을 링버퍼에 기록해 두고 (2)워밍업 응답 때 차트의 마지막 완결봉(시각+고저가가 같은
+// 틱 구간)을 버퍼에서 찾아 봉 경계를 맞추고 (3)그 뒤 형성 중인 봉의 틱을 새 실시간 빌더에 이어받게 한다. 못 찾으면(버퍼 부족/불일치) 예전처럼 빈 빌더로 시작한다.
+// 빌더가 만드는 봉의 시각도 차트 기준(첫 틱 시각)으로 맞춘다. LIVE_SEED_ENABLED=false / LIVE_TICKBAR_TIME_FIRST_TICK=false 로 각각 예전 방식으로 복원된다.
+// ================================================================================
+var LIVE_SEED_ENABLED = true;            // false = 워밍업 때 빈 빌더로 재시작(v5.22 이전 방식)
+var LIVE_TICKBAR_TIME_FIRST_TICK = true; // false = 봉 시각을 마지막 틱 시각으로(v5.22 이전 방식)
+function TickBarBuilder(nTicks) { this.n = nTicks; this.count = 0; this.high = null; this.low = null; this.lastSdate = null; this.lastStime = null; this.firstSdate = null; this.firstStime = null; }
 TickBarBuilder.prototype.onTick = function (price, sdate, stime) {
-    if (this.count === 0) { this.high = price; this.low = price; } else { this.high = Math.max(this.high, price); this.low = Math.min(this.low, price); }
+    if (this.count === 0) { this.high = price; this.low = price; this.firstSdate = sdate; this.firstStime = stime; } else { this.high = Math.max(this.high, price); this.low = Math.min(this.low, price); }
     this.lastSdate = sdate; this.lastStime = stime; this.count++;
-    if (this.count >= this.n) { var bar = { high: this.high, low: this.low, sdate: this.lastSdate, stime: this.lastStime }; this.count = 0; this.high = null; this.low = null; return bar; }
+    if (this.count >= this.n) {
+        var bar = LIVE_TICKBAR_TIME_FIRST_TICK ? { high: this.high, low: this.low, sdate: this.firstSdate, stime: this.firstStime } : { high: this.high, low: this.low, sdate: this.lastSdate, stime: this.lastStime };
+        this.count = 0; this.high = null; this.low = null; return bar;
+    }
     return null;
 };
+// 최근 틱 링버퍼(가격/날짜/시각 3개 배열, 논리 인덱스 tkN은 계속 증가, 저장위치는 tkN % TICKLOG_SIZE). 1000틱봉의 마지막 완결봉+형성중 봉을 덮는 크기.
+var TICKLOG_SIZE = 2100;
+var tkP = new Array(TICKLOG_SIZE), tkD = new Array(TICKLOG_SIZE), tkT = new Array(TICKLOG_SIZE), tkN = 0;
+function tickLogPush(p, d, t) { var k = tkN % TICKLOG_SIZE; tkP[k] = p; tkD[k] = d; tkT[k] = t; tkN++; }
+function tickWindowMatches(s, n, bar) {
+    var h = -1e18, l = 1e18;
+    for (var q = s; q < s + n; q++) { var p = tkP[q % TICKLOG_SIZE]; if (p > h) h = p; if (p < l) l = p; }
+    return h === bar.high && l === bar.low;
+}
+// 새 빌더를 차트의 봉 경계에 맞춰 이어받게 한다. completedBars = 차트의 완결봉(마지막=가장 최근 완결봉). 반환: {ok, why, k(형성중 봉 틱수), replay(이어받다가 완성된 봉들)}
+function seedTickBuilder(builder, n, completedBars) {
+    var out = { ok: false, why: "", k: 0, replay: [] };
+    if (!LIVE_SEED_ENABLED) { out.why = "disabled"; return out; }
+    if (completedBars.length < 2) { out.why = "few_bars"; return out; }
+    var last = completedBars[completedBars.length - 1], prev = completedBars[completedBars.length - 2];
+    var lastD = String(last.sdate), prevD = String(prev.sdate);
+    var oldest = tkN - Math.min(tkN, TICKLOG_SIZE);
+    for (var e = tkN - 1; e - n + 1 >= oldest; e--) {
+        var s = e - n + 1;
+        if (tkT[s % TICKLOG_SIZE] !== last.stime || tkD[s % TICKLOG_SIZE] !== lastD) continue; // 차트 틱봉 시각 = 봉의 첫 틱 시각
+        if (!tickWindowMatches(s, n, last)) continue;
+        if (s - n >= oldest) { // 직전 봉도 버퍼에 있으면 같이 확인(우연 일치 방지)
+            var ps = s - n;
+            if (tkT[ps % TICKLOG_SIZE] !== prev.stime || tkD[ps % TICKLOG_SIZE] !== prevD || !tickWindowMatches(ps, n, prev)) continue;
+        }
+        for (var q = e + 1; q < tkN; q++) { var kq = q % TICKLOG_SIZE; var b = builder.onTick(tkP[kq], tkD[kq], tkT[kq]); if (b) out.replay.push(b); }
+        out.ok = true; out.k = tkN - 1 - e;
+        return out;
+    }
+    out.why = (tkN < n * 2) ? "log_short" : "not_found";
+    return out;
+}
 
 // ================================================================================
 // [신규][2026-10-01][v5.21 다이아몬드(보라/흰색) 기준 개편] 사용자 설계:
@@ -1281,10 +1324,7 @@ function countBarsAfterEpoch(bars, epochRef) {
 // 에 일괄 적용한다. 실시간이 센 봉수는 워밍업 사이 구간의 임시값일 뿐이며 다음 워밍업에서 항상 기준값으로 교정된다.
 // 재동기화 직전 값(실시간이 센 값)과 기준값이 2 이상 다르면(단, 같은 실행 중 직전 동기화가 있었던 신호만) GATE_COUNT_SYNC 줄로
 // 원인 판별용 수치를 남긴다. 재시작 직후 첫 동기화(꺼진 시간분/이전 누적 오차)는 진단로그에만 남기고 알림은 내지 않는다.
-var GATE_SYNC_MIN_DIFF = 2;            // 이 이상 차이날 때만 기록(경계 1봉 흔들림은 무시)
-var GATE_SYNC_LOG_COOLDOWN_SEC = 600;  // 같은 신호는 10분에 한 번만 기록
 var liveReseedStats = {};              // 프레임 -> { n: 실시간 빌더 재시작 횟수, discarded: 버려진 부분봉 틱수(틱봉), gap: 무틱공백 정지 횟수(분봉) }
-var gateSyncBase = {};                 // 신호키 -> 이번 실행의 직전 동기화 시점 기준값(저장 안 함: 재시작하면 첫 동기화는 기록만)
 var windowNeedsFull = {};              // 프레임 -> true: 재조회 창이 가장 오래된 감시신호를 못 덮음 -> 다음 요청은 최대 크기로
 var windowUncoverableLoggedAt = {};    // 프레임 -> 마지막 기록시각(ms) - 최대 크기로도 못 덮는 초장기 신호 진단로그 스팸 방지
 function countRealBarsAfterEpoch(bars, epochRef) {
@@ -1297,49 +1337,9 @@ function countRealBarsAfterEpoch(bars, epochRef) {
     return n;
 }
 function getLiveReseedStats(period) { return liveReseedStats[period] || (liveReseedStats[period] = { n: 0, discarded: 0, gap: 0 }); }
-function logGateCountSync(sig, base, preCount, chartCnt) {
-    var diff = chartCnt - preCount;
-    if (Math.abs(diff) < GATE_SYNC_MIN_DIFF) return;
-    var nowEp = lastTickEpoch || Math.floor(Date.now() / 1000);
-    if (sig._syncLogEpoch !== undefined && sig._syncLogEpoch !== null && (nowEp - sig._syncLogEpoch) < GATE_SYNC_LOG_COOLDOWN_SEC) return;
-    sig._syncLogEpoch = nowEp;
-    var isTick = (sig.tf.charAt(0) === "T");
-    var rs = getLiveReseedStats(sig.period);
-    var liveD = (sig._liveBars || 0) - base.liveBars;          // 직전 동기화 이후 실시간이 완결시킨 봉 수
-    var chartD = chartCnt - base.chartCnt;                      // 같은 구간에 차트에 생긴 봉 수
-    var reseeds = rs.n - base.reseed, discarded = rs.discarded - base.discard, gaps = rs.gap - base.gap;
-    var ticksD = isTick ? (totalTicksReceived - base.ticks) : 0;
-    var expTicks = isTick ? chartD * sig.period : 0;
-    var cause;
-    if (diff > 0) {
-        if (isTick && chartD >= 3 && ticksD < 0.8 * expTicks) cause = "TICK_SHORT";                         // 실시간 수신틱이 차트 기준보다 적음
-        else if (!isTick && gaps > 0 && chartD - liveD >= 1) cause = "LIVE_GAP_STOP";                       // 무틱공백으로 실시간 정지
-        else if (chartD - liveD >= 2 && reseeds > 0 && isTick && discarded >= sig.period * 0.5 * (chartD - liveD)) cause = "RESEED_LOSS"; // 재조회 때 실시간 빌더 재시작으로 손실
-        else if (chartD - liveD >= 2) cause = "LIVE_BAR_MISSED";                                            // 실시간이 봉을 놓침(원인 미상)
-        else cause = "COUNTER_LOW_OTHER";                                                                   // 구간 봉수는 맞는데 카운터가 작음(기타)
-    } else {
-        cause = "LIVE_OVERCOUNT";                                                                            // 실시간이 차트보다 봉을 더 셈
-    }
-    var detail = "sig=" + sig.sdate + " " + sig.stime + "@" + Number(sig.price).toFixed(2) +
-        "|liveD=" + liveD + "|chartD=" + chartD + "|pre=" + preCount + "|reseed=" + reseeds +
-        (isTick ? ("|discard=" + discarded + "|ticks=" + ticksD + "|expTicks=" + expTicks) : ("|gap=" + gaps));
-    try {
-        logDiagnostic("[DIAG][GATE_COUNT_SYNC] label=" + sig.tf + " kind=" + sig.kind + " live=" + preCount + " chart=" + chartCnt + " cause=" + cause + " " + detail);
-        var wp = nowServerTimeStr().split(" ");
-        timedPrintOnFile(OUTPUT_FILE, sig.itemName + "," + sig.tf + ",GATE_COUNT_SYNC," + wp[0] + "," + wp[1] + "," + sig.kind + "," + preCount + "," + chartCnt + "," + cause + "," + detail + "\n");
-    } catch (eLog) {}
-}
 function syncGateCounter(sig, completedBars, preWalkCount) {
-    var chartCnt = countRealBarsAfterEpoch(completedBars, sig.signalEpoch);
-    var pk = pkOf(sig), rs = getLiveReseedStats(sig.period);
-    var base = gateSyncBase[pk];
-    try {
-        if (base) logGateCountSync(sig, base, preWalkCount, chartCnt);
-        else if (Math.abs(chartCnt - preWalkCount) >= GATE_SYNC_MIN_DIFF)
-            logDiagnostic("[DIAG][GATE_COUNT_SYNC_INIT] label=" + sig.tf + " kind=" + sig.kind + " saved=" + preWalkCount + " chart=" + chartCnt + " diff=" + (chartCnt - preWalkCount) + " (재시작 후 첫 동기화: 꺼진 시간분/이전 누적 오차 포함, 알림 없음)");
-    } catch (eSync) {}
-    sig.barsElapsedSinceRegistration = chartCnt; // 기준값으로 덮어씀(올리기/내리기 모두)
-    gateSyncBase[pk] = { chartCnt: chartCnt, liveBars: sig._liveBars || 0, ticks: (typeof totalTicksReceived !== "undefined" ? totalTicksReceived : 0), reseed: rs.n, discard: rs.discarded, gap: rs.gap };
+    // [v5.26] 진단/알림(GATE_COUNT_SYNC)은 제거하고 교정만 남김: 게이트 카운터를 차트 완결봉 기준값으로 덮어씀(올리기/내리기 모두)
+    sig.barsElapsedSinceRegistration = countRealBarsAfterEpoch(completedBars, sig.signalEpoch);
 }
 function windowCoversOldestSignal(fileLabel, bars) {
     var oldest = oldestPendingSignalEpoch(fileLabel);
@@ -2602,7 +2602,11 @@ function Main_OnRcvChartEx(chartEx) {
         // liveBuilders가 다음 완결봉부터 이어붙이는 것과 정확히 맞아떨어진다.
         liveCalcs[thisCycle] = calc;
         var _oldLB = liveBuilders[thisCycle], _rsT = getLiveReseedStats(thisCycle); _rsT.n++; if (_oldLB && _oldLB.count) _rsT.discarded += _oldLB.count; // [진단] 재시작으로 버려지는 부분봉 틱수 집계
-        liveBuilders[thisCycle] = new TickBarBuilder(thisCycle);
+        var _nbTick = new TickBarBuilder(thisCycle);
+        var _seed = seedTickBuilder(_nbTick, thisCycle, barsForCalc); // [v5.23] 차트 봉 경계에 맞춰 형성 중 봉 틱을 이어받음(실패하면 빈 빌더 = 예전 방식)
+        liveBuilders[thisCycle] = _nbTick;
+        if (_seed.ok) _rsT.seeded = (_rsT.seeded || 0) + 1; else _rsT.seedFail = (_rsT.seedFail || 0) + 1;
+        var _liveReplay = _seed.replay;
         delete degradedPeriods[thisFileLabel]; // [2026-09-02][재시도보완] 실제 성공했으니 저품질 표시 해제
         // [제거][사용자 요청][철회기능 전체 제거] findClosestCalcDiag/computeRetractionMargin/formatRetractionJudge 삭제됨(사용처 없어짐)
 
@@ -2671,6 +2675,7 @@ function Main_OnRcvChartEx(chartEx) {
         // (기존 저품질 전환 로직 재사용, 새 분기 없음).
         if (bars.length > 0) {
             completedCycles[thisCycle] = true;
+            for (var _ri = 0; _ri < _liveReplay.length; _ri++) { try { processLiveBar(thisCycle, _liveReplay[_ri].high, _liveReplay[_ri].low, _liveReplay[_ri].sdate, _liveReplay[_ri].stime); } catch (eRp) {} } // [v5.23] 응답 처리 중 완성된 봉(드묾)
             filledCycles[thisCycle] = true; // [2026-09-25 신규] 예외 없이 여기까지 왔고 봉을 1개 이상 실제로 받았을 때만 true - thisCycle은 #주기 프레임재조준이 있었으면 이미 실제값으로 치환된 상태라 그대로 정확함
         } else {
             recordFailureForRetry({ code: MARKET_DATA_CODE, nameEn: thisItemName, cycle: thisCycle });
@@ -2713,6 +2718,7 @@ function Main_OnUpdateMarket(itemcode, updateID, exchangeKind) {
     var sdate = parseDateField(marketDataObj.date), stime = parseTimeField(marketDataObj.time);
     if (!sdate || !stime) return;
     lastTickEpoch = dateTimeToEpochApprox(sdate, stime);
+    tickLogPush(curPrice, sdate, stime); // [v5.23] 틱 링버퍼 기록(워밍업 때 실시간 빌더 경계 맞추기용)
     if (REALTIME_TRACK_ENABLED) {
         Object.keys(liveBuilders).forEach(function (periodStr) {
             try {

@@ -58,13 +58,14 @@
   3. 예스트레이더에서 예스스팟 전략(6개 중 원하는 것) 실행
   4. 이 화면에 실시간으로 신호가 쌓이는 것을 확인
 ================================================================================
-[버전] 2026-10-01 v5.25
+[버전] 2026-10-01 v5.26
 [버전관리 규칙] 이 파일을 수정할 때마다(사소한 수정 포함) 반드시 위 [버전] 값을
   소수점 둘째자리 기준으로 올리고(v1.00->v1.01->v1.02..., 구조가 크게 바뀌면
   v2.00처럼 정수부를 올림), 아래 [변경이력]에 한 줄 추가할 것. 예스스팟 스크립트
   (min/tick)와 세트로 움직이는 파일이라, 버전을 안 올리면 서버 스크립트와
   대시보드 중 어느 조합이 실제로 배포됐는지 나중에 구분할 방법이 없어진다.
 [변경이력]
+  v5.26 (2026-10-01): [확인용 알림 제거] 카운터 불일치 알림(GATE_COUNT_SYNC)과 실시간 이어받기 결과 알림(LIVE_SEED_SUMMARY)을 제거(확인 목적 종료). 구버전 스크립트가 보내는 두 줄은 조용히 무시.
   v5.24 (2026-10-01): [실시간 이어받기 결과 알림 - 스크립트 v5.24/브릿지와 세트] 스크립트가 순환 끝에 한 줄(LIVE_SEED_SUMMARY)로 보내는 프레임별 이어받기 성공/실패 요약을
     알림 1건으로 표시(실패가 있거나 첫 순환일 때만). 진단로그를 직접 볼 필요 없음.
   v5.22 (2026-10-01): [저품질이관 알림 묶음 표시 - 스크립트 v5.22/브릿지와 세트] 프레임마다 따로 뜨던 알림을, 스크립트가 순환 끝에 한 줄로 보내는
@@ -3798,34 +3799,7 @@ function handleDegradedDeferred(sig){
   }
 }
 
-// [신규][2026-09-30] 게이트 카운터 불일치 알림 - 실시간이 센 봉 수와 차트 기준 봉 수가 다를 때 스크립트가
-// 남기는 GATE_COUNT_SYNC를 한 줄로 보여준다(원인 수치는 브릿지가 조립한 sig.reason에 이미 들어 있음).
-// 판정/감시목록과는 무관한 진단 알림이라 신호테이블에는 안 넣는다. 과거 이력 재생 중(isLive=false)엔 무시.
-// [신규][2026-10-01][스크립트 v5.24] 실시간 이어받기(LIVE_SEED) 결과 알림 - 스크립트가 순환 끝에 한 줄로 보낸 요약(성공/실패 프레임 목록)을 알림 1건으로 표시.
-// 실패가 있을 때만 띄운다(전부 성공이면 조용히). 프레임별 상세는 스크립트의 이어받기 전용 진단파일. 과거 이력 재생 중(isLive=false)엔 무시.
-var liveSeedLastAt = {};
-function handleLiveSeedSummary(sig){
-  if (!isLive) return;
-  var fail = parseInt(sig.seedFail, 10) || 0;
-  if (fail <= 0) return; // [수정][2026-10-01] 어긋난(실패) 결과만 알림 - 전부 성공이면 띄우지 않음
-  var src = (sig.label && sig.label.charAt(0) === 'T') ? '틱봉' : '분봉';
-  var key = sig.item + '|' + src;
-  var now = Date.now();
-  if (liveSeedLastAt[key] && (now - liveSeedLastAt[key]) < 60000) return;
-  liveSeedLastAt[key] = now;
-  showInPageAlertLine('🟠 이어받기 ' + sig.item + ' ' + src + ' ' + (sig.reason || ''));
-}
-var gateSyncLastAt = {}; // key(item|label|신호종류) -> 마지막 알림시각(ms)
-var GATE_SYNC_COOLDOWN_MS = 60000;
-function handleGateCountSync(sig){
-  if (!isLive) return;
-  var key = sig.item + '|' + sig.label + '|' + (sig.signalKind || '');
-  var now = Date.now();
-  if (gateSyncLastAt[key] && (now - gateSyncLastAt[key]) < GATE_SYNC_COOLDOWN_MS) return;
-  gateSyncLastAt[key] = now;
-  var detail = sig.reason || ('실시간 ' + sig.liveCount + ' / 차트 ' + sig.chartCount);
-  showInPageAlertLine('🟠 카운터불일치 ' + sig.item + ' ' + sig.label + ' - ' + detail);
-}
+
 
 document.getElementById('apClose').onclick = function(){
   document.getElementById('alertPopup').classList.remove('show');
@@ -4103,8 +4077,8 @@ function connectWS(){
         // 모달로 알려준다 - 일반 신호테이블(BULL/BEAR)로는 안 보내고 알림창만.
         if (sig.kind === 'DEGRADED_DEFERRED') { handleDegradedDeferred(sig); return; }
         // [신규][2026-09-30] 게이트 카운터 불일치 진단(스크립트 v5.16 GATE_COUNT_SYNC) - 저품질이관처럼 알림창 한 줄로만 표시
-        if (sig.kind === 'GATE_COUNT_SYNC') { handleGateCountSync(sig); return; }
-        if (sig.kind === 'LIVE_SEED_SUMMARY') { handleLiveSeedSummary(sig); return; }
+        // [v5.26] 카운터 불일치/이어받기 결과 알림은 제거됨 - 구버전 스크립트가 아직 이 줄을 보내면 조용히 무시
+        if (sig.kind === 'GATE_COUNT_SYNC' || sig.kind === 'LIVE_SEED_SUMMARY') { return; }
 
         // [진단용] 실시간 신호가 도착한 "진짜 순간"(브라우저 시계 기준)과,
         // 그 신호 안에 찍혀있는 date/time 값을 나란히 콘솔에 남깁니다.

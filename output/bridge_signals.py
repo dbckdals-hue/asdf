@@ -55,6 +55,8 @@
      (b)완전삭제가 (종목,타임프레임,날짜,시각)만으로 "판정 끝남"을 판단해서 같은 시각의 다른 신호(가격/종류 다름)까지
      지우던 것 수정(가격+신호종류까지 매칭). (c)STATS_IMMEDIATE가 같은 파일의 일반 신호줄과 이중집계되던 것 수정.
 
+  8. [2026-10-01 v5.26] GATE_COUNT_SYNC(카운터 불일치 알림)와 LIVE_SEED_SUMMARY(이어받기 결과 알림)는 확인 목적이 끝나 제거 - 스크립트도 더는 안 보내며, 구버전 스크립트가 보내는 두 줄은 시스템 진단줄로 취급해 조용히 무시한다(아래 7번 설명은 이력).
+
   7. [2026-09-30 추가] GATE_COUNT_SYNC(스크립트 v5.16/v5.17: v5.17부터 직전 동기화 이후 구간 기준): 워밍업이 게이트 카운터를 차트 기준으로 맞출 때 실시간 값과 2 이상 다르면
      남기는 진단줄. 원인 판별용 수치를 한글 문구로 조립해 대시보드 알림창에 저품질이관처럼 한 줄로 보낸다(데스크탑 알림창엔 안 띄움).
 
@@ -527,77 +529,6 @@ def _parse_target(data):
         return (instrument, contract)
     return None
 
-# [신규][2026-09-30] GATE_COUNT_SYNC(게이트 카운터 불일치 진단) 알림창용 한글 문구 조립.
-# 스크립트(Main.PrintOnFile)에 한글을 쓰면 인코딩이 깨질 수 있어, 스크립트는 영문 코드/숫자만 보내고
-# 사람이 읽는 한글은 여기(파이썬)에서 만든다.
-_GATE_SYNC_CAUSE_KR = {
-    "TICK_SHORT": "수신틱 부족(실시간 시세가 차트보다 틱을 적게 받음)",
-    "RESEED_LOSS": "워밍업 재시작으로 실시간 봉 손실",
-    "LIVE_GAP_STOP": "무틱공백으로 실시간 정지",
-    "LIVE_BAR_MISSED": "실시간이 봉을 놓침(원인 미상)",
-    "COUNTER_LOW_OTHER": "구간 봉수는 맞는데 카운터가 작음(기타)",
-    "WARM_OVERCOUNT": "워밍업이 봉을 과다 가산",
-    "LIVE_OVERCOUNT": "실시간이 봉을 과다 계산",
-}
-def _gate_sync_kv(detail):
-    kv = {}
-    for seg in (detail or "").split("|"):
-        if "=" in seg:
-            k, v = seg.split("=", 1)
-            kv[k.strip()] = v.strip()
-    return kv
-def _gate_sync_int(kv, key):
-    try:
-        return int(kv.get(key, "0"))
-    except ValueError:
-        return 0
-_LIVE_SEED_WHY_KR = {
-    "log_short": "틱 로그 부족(막 시작함)",
-    "not_found": "실시간 틱이 차트와 안 맞음",
-    "few_bars": "차트 봉 부족",
-    "bucket_mismatch": "형성 중 봉이 현재 구간 아님",
-    "no_calcBase": "계산기 복사 실패",
-    "disabled": "이어받기 꺼짐",
-    "fail": "원인 미상",
-}
-def compose_live_seed_reason(total, ok, fail, fail_items, pass_no):
-    # [수정][2026-10-01] 알림에는 어긋난 결과만, 사유별 건수로 보여준다(프레임별 상세는 스크립트의 이어받기 전용 진단파일).
-    suffix = f" ({pass_no}번째 순환)" if pass_no else ""
-    try:
-        nfail = int(fail)
-    except ValueError:
-        nfail = 0
-    if nfail <= 0:
-        return f"{total}개 프레임 전부 이어받기 성공{suffix}"
-    counts = {}
-    for it in fail_items:
-        why = it.split(":", 1)[1] if ":" in it else it
-        counts[why] = counts.get(why, 0) + 1
-    bits = [f"{_LIVE_SEED_WHY_KR.get(w, w)} {n}건" for w, n in counts.items()]
-    return f"{total}개 중 실패 {fail} - " + ", ".join(bits) + " (상세: 이어받기 진단파일)" + suffix
-def compose_gate_sync_reason(sig_kind, live, chart, cause, detail):
-    kv = _gate_sync_kv(detail)
-    try:
-        diff = int(chart) - int(live)
-    except ValueError:
-        diff = 0
-    s = f"{sig_kind} 실시간 {live} / 차트 {chart} (차이 {diff:+d}) | 원인: {_GATE_SYNC_CAUSE_KR.get(cause, cause)}"
-    # 스크립트 v5.17: 직전 동기화 이후 구간 기준 수치(liveD/chartD). 구버전 줄(live/chartLive/warm)도 그대로 표시되게 폴백.
-    if "liveD" in kv or "chartD" in kv:
-        bits = [f"직전 동기화 이후 구간: 실시간이 센 봉 {_gate_sync_int(kv, 'liveD')} / 차트에 생긴 봉 {_gate_sync_int(kv, 'chartD')}",
-                f"재시작 {_gate_sync_int(kv, 'reseed')}회"]
-    else:
-        bits = [f"실시간봉 {_gate_sync_int(kv, 'live')}/같은구간 차트봉 {_gate_sync_int(kv, 'chartLive')}",
-                f"워밍업가산 {_gate_sync_int(kv, 'warm')}", f"재시작 {_gate_sync_int(kv, 'reseed')}회"]
-    if "ticks" in kv:
-        bits.append(f"수신틱 {_gate_sync_int(kv, 'ticks'):,}(차트기준 {_gate_sync_int(kv, 'expTicks'):,}) 버린틱 {_gate_sync_int(kv, 'discard'):,}")
-    if "gap" in kv:
-        bits.append(f"무틱정지 {_gate_sync_int(kv, 'gap')}회")
-    sigtxt = kv.get("sig")
-    if sigtxt:
-        bits.append("신호 " + sigtxt)
-    return s + " | " + ", ".join(bits)
-
 def parse_line(line):
     # 형식: 종목,타임프레임,신호,날짜,시각,가격[,7번째 필드]
     parts = line.strip().split(",")
@@ -691,26 +622,6 @@ def parse_line(line):
                 result["reason"] = parts[5] + "건 - " + ", ".join(labels) + " (재시도=" + parts[6] + "회 소진 - 다음 순환으로 이관)"
             elif len(parts) >= 7:
                 result["reason"] = "주기=" + parts[5] + " 재시도=" + parts[6] + "회 소진 - 다음 순환으로 이관"
-        elif result["kind"] == "LIVE_SEED_SUMMARY":
-            # [신규][2026-10-01][스크립트 v5.24] 순환 끝에 한 줄로 오는 "실시간 이어받기" 결과. 형식:
-            # item,첫라벨,LIVE_SEED_SUMMARY,date,time,총수,성공수,실패수,라벨:사유|라벨:사유...,순환번호
-            if len(parts) >= 8:
-                fail_items = [x for x in (parts[8] if len(parts) >= 9 else "").split("|") if x]
-                result["seedTotal"] = parts[5]
-                result["seedOk"] = parts[6]
-                result["seedFail"] = parts[7]
-                result["seedPass"] = parts[9] if len(parts) >= 10 else ""
-                result["seedFailList"] = fail_items
-                result["reason"] = compose_live_seed_reason(parts[5], parts[6], parts[7], fail_items, result["seedPass"])
-        elif result["kind"] == "GATE_COUNT_SYNC":
-            # [신규][2026-09-30] 형식: item,tf,GATE_COUNT_SYNC,date,time,신호종류,실시간카운터,차트카운터,원인코드,상세(key=value|...)
-            if len(parts) >= 9:
-                result["signalKind"] = parts[5]
-                result["liveCount"] = parts[6]
-                result["chartCount"] = parts[7]
-                result["cause"] = parts[8]
-                result["detail"] = parts[9] if len(parts) >= 10 else ""
-                result["reason"] = compose_gate_sync_reason(parts[5], parts[6], parts[7], parts[8], result["detail"])
         elif result["kind"] == "WRITE_FAILURE_ALERT":
             # [2026-08-24 신규] 6번째 필드(parts[5])=버퍼적체줄수(대시보드가
             # price로 표시), 7번째 필드(parts[6])=실제 에러메시지(+선택적

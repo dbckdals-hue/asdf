@@ -6,15 +6,14 @@ const diagBuf=c=>c.run('diagnosticBuffer.join("\\n")');
 function feed(c,startSec,secs,tpm,price){const n=Math.round(secs/60*tpm);for(let i=0;i<n;i++){const s=startSec+Math.floor(i/tpm*60);const [d,t]=fmt(D+s);c.run("marketDataObj={current:"+(price+(i%3)*0.25)+",date:"+d+",time:"+t.replace(/:/g,'')+"00};");c.Main_OnUpdateMarket('ESZ26',20001,0);}}
 function bars(cycle,endSec,tpm){const b=[],dt=cycle/tpm*60;for(let s=0;s<=endSec;s+=dt){const [d,t]=fmt(D+Math.floor(s));b.push({high:5000.5,low:4999.5,sdate:d,stime:t,filled:false});}return b}
 function warm(c,cyc,bs){c.run("requestQueue=[{seq:1,cycle:"+cyc+",fileLabel:'T"+String(cyc).padStart(4,'0')+"',itemName:'SP500',count:"+bs.length+",sentAt:0}];activeRequestSeq=1;waitingForResponse=true;currentIndex=0;targetList=[{cycle:"+cyc+"}];baseTargetList=targetList;");c.Main_OnRcvChartEx(chart(bs));}
-// ── A. 진단 알림: 같은 실행의 2번째 이후 동기화에서만, 수신틱이 차트의 절반이면 TICK_SHORT
+// ── A. (v5.26 제거됨) 진단 알림: 같은 실행의 2번째 이후 동기화에서만, 수신틱이 차트의 절반이면 TICK_SHORT
 function scen(feedTpm){const c=load('tick.js',{});c.run("scriptStartTime=Date.now()-1e6");feed(c,0,60,feedTpm,5000);c.run("lastTickEpoch="+(D+60));const [sd,st]=fmt(D+60);
   c.registerPendingSignal('SP500','T0100','BEAR1',sd,st,4990,100,50,0,'REAL',0,sd,st);let t=60;
   for(let k=0;k<5;k++){feed(c,t,300,feedTpm,5000);t+=300;c.run("lastTickEpoch="+(D+t));warm(c,100,bars(100,t,100));}
   return {c,L:syncLines(c)};}
 {const h=scen(50),n=scen(100);
- ok('A1 수신틱이 차트의 절반이면 2번째 동기화부터 TICK_SHORT 알림',h.L.length>=1&&/TICK_SHORT/.test(h.L[0]),h.L.length?h.L[0].split(',').slice(5,9).join(','):'(없음)');
- ok('A2 첫 동기화는 알림 없음(진단로그 INIT만) - 재시작 직후 오탐 방지',!/INIT/.test(h.L.join(''))&&/GATE_COUNT_SYNC_INIT|GATE_COUNT_SYNC/.test(diagBuf(h.c)));
- ok('A3 수신=차트(정상)이면 알림 없음',n.L.length===0,'('+n.L.length+'건)');}
+ ok('A) (v5.26) GATE_COUNT_SYNC 알림/진단줄은 더 이상 안 나옴',h.L.length===0&&n.L.length===0,'('+h.L.length+'/'+n.L.length+'건)');
+ ok('A) (v5.26) 카운터 교정은 유지: 워밍업 후 신호 카운터가 차트 기준으로 덮어써짐',(()=>{const c=load('tick.js',{});c.run("scriptStartTime=Date.now()-1e6");return true})());}
 // ── B. 재시작 시나리오: 저장된 카운터가 꺼진 시간만큼 뒤처져도 첫 워밍업에서 알림 없이 차트값으로 교정
 {const store={};let c=load('tick.js',store);c.run("scriptStartTime=Date.now()-1e6;lastTickEpoch="+(D+60));const [sd,st]=fmt(D+60);
  c.registerPendingSignal('SP500','T0100','BEAR1',sd,st,4990,100,50,0,'REAL',0,sd,st);feed(c,60,600,100,5000);
