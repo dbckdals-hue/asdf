@@ -30,7 +30,7 @@ var GAP_AFTER_REMOVE_MS = 200;    // 삭제 후 다음 요청까지 (삭제와 �
 var MAX_PASSES = 2;               // 몇 바퀴 돌고 멈출지 (0 = 무한)
 var READ_ALL_BARS = false;        // true면 받은 봉의 고가/저가/날짜/시간을 전부 읽어서 시간 측정 (기존 스크립트가 하는 일)
 var PROBE_CYCLES = PROBE_DEFAULT; // 이 주기들은 가장 최근 봉 5개의 날짜/시간/고가/저가를 화면에 찍음 (HTS 차트와 시각 표기 비교용)
-var USE_IND_SET = false;          // true면 기존처럼 "#주기" 지표를 같이 요청 (주기표 확인용). 기본은 봉만 요청
+var USE_IND_SET = true;           // 기존 스크립트와 똑같은 요청 형식("#주기" 지표 포함) - 이 형식이 실제로 응답이 오는 검증된 방식. false로 바꾸면 지표 없이 요청(응답이 안 올 수 있음)
 
 var scriptStartMs = 0, passStartMs = 0, passNo = 0;
 var targetList = [], idx = 0;
