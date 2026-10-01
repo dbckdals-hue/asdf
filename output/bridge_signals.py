@@ -485,9 +485,14 @@ async def handler(websocket):
                     # 나이와 무관하게 제외하고, 이미 달성/무효로 끝난 것 중
                     # 오래된 것만 지웁니다.
                     days = data.get("days", 6)
+                    hours = data.get("hours")  # [2026-10-01] 있으면 시간 기준(예: 24), 없으면 기존 일 기준
+                    try:
+                        hours = float(hours) if hours is not None else None
+                    except (TypeError, ValueError):
+                        hours = None
                     target = _parse_target(data)
-                    print(f"대시보드에서 '신호달성 완전삭제' 요청을 받았습니다. (기준: {days}일, 감시중 제외, 대상: {target or '전체'})")
-                    result = purge_all(days, keep_pending=True, target=target)
+                    print(f"대시보드에서 '신호달성 완전삭제' 요청을 받았습니다. (기준: {str(hours) + '시간' if hours is not None else str(days) + '일'}, 감시중 제외, 대상: {target or '전체'})")
+                    result = purge_all(days, keep_pending=True, target=target, hours=hours)
                     await websocket.send(json.dumps({"cmd": "purge_keep_pending_result", **result}))
                 elif data.get("cmd") == "get_report":
                     # [2026-07-19 신규] 보고서 페이지(yesspot_report.html)가
@@ -899,7 +904,7 @@ def log_forced_pending_purge(signal_path, item, label, kind, date, time_, price,
         print(f"  ? [추적유실 증거기록] 실패(무시): {e}")
         return None
 
-def purge_file(path, days, keep_pending):
+def purge_file(path, days, keep_pending, hours=None):
     """[2026-07-19 재작성] 파일 하나를 대상으로 완전삭제를 수행합니다.
     이전에는 purge_signal_file()/purge_resolved_old_keep_pending() 두
     함수가 SIGNAL_FILE 하나를 각자 처리했는데, 이제는 파일이 여러 개라
@@ -955,6 +960,10 @@ def purge_file(path, days, keep_pending):
     # 에서 이미 쓰고 있는 _CT_ZONE과 동일한 방식으로 맞춥니다.
     now_ct = datetime.now(_CT_ZONE).replace(tzinfo=None) if _CT_ZONE else datetime.now()
     cutoff = (now_ct - timedelta(days=days)).strftime("%Y%m%d")
+    # [2026-10-01 신규][신호달성 완전삭제 시간기준] hours가 주어지면(신호달성 완전삭제 전용), 신호/판정줄의 "나이"를
+    # 날짜(일)가 아니라 신호 날짜+시각(서버시간 CT) 기준 hours시간으로 판단한다. HEARTBEAT/REMOVAL_LOG/STATS_IMMEDIATE 같은
+    # 부속 로그줄은 위쪽 cutoff(일 기준)를 그대로 쓴다 - 감시중 신호의 하트비트를 24시간 만에 지우면 안 되기 때문.
+    cutoff_dt = (now_ct - timedelta(hours=hours)).strftime("%Y%m%d %H:%M:%S") if hours is not None else None
     archive = _load_archive(path)  # [2026-07-19 신규] 지워지기 전에 누적할 통계 아카이브
     archive_changed = False
 
@@ -1024,7 +1033,12 @@ def purge_file(path, days, keep_pending):
             kept_lines.append(ln)
             continue
 
-        is_old = date < cutoff
+        if cutoff_dt is not None and keep_pending:
+            # 날짜(8자리 숫자)/시각(HH:MM:SS)이 정상 형식이 아니면 "오래됨"으로 보지 않고 보존한다(이상한 줄 삭제 방지).
+            is_old = (len(date) == 8 and date.isdigit() and len(time_) == 8 and time_[2] == ":" and time_[5] == ":"
+                      and (date + " " + time_) < cutoff_dt)
+        else:
+            is_old = date < cutoff
         should_remove = is_old if keep_pending else (is_resolved or is_old)
 
         if should_remove:
@@ -1092,7 +1106,7 @@ def purge_file(path, days, keep_pending):
     return {"removed": removed_count, "kept": len(kept_lines), "force_purged_pending": force_purged_pending}
 
 
-def purge_all(days, keep_pending, target=None):
+def purge_all(days, keep_pending, target=None, hours=None):
     """[2026-07-19 신규] discover_signal_files()로 찾은 파일들 중 target에
     해당하는 것만(target이 None이면 전체) purge_file()로 정리하고,
     결과를 합산해서 돌려줍니다.
@@ -1106,7 +1120,7 @@ def purge_all(days, keep_pending, target=None):
     per_file = []
     all_force_purged_pending = []  # [2026-07-27 추가] 전체 파일 합산
     for f in files:
-        result = purge_file(f["path"], days, keep_pending)
+        result = purge_file(f["path"], days, keep_pending, hours)
         total_removed += result["removed"]
         total_kept += result["kept"]
         for evt in result.get("force_purged_pending", []):

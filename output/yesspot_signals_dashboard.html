@@ -820,7 +820,7 @@
     <option value="6">6일</option>
   </select>
   <button id="btnPurge" title="감시중 목록 포함. 7일 이상 경과한 달성/무효 Data를 로그파일에서 영구 삭제. ">완전삭제</button>
-  <button id="btnPurgeKeepPending" title="감시중 목록 제외. 7일 이상 경과한 달성/무효 Data를 로그파일에서 영구 삭제. ">신호달성 완전삭제</button>
+  <button id="btnPurgeKeepPending" title="감시중 목록 제외. 24시간 이상 경과한 달성/무효 Data를 로그파일에서 영구 삭제. ">신호달성 완전삭제</button>
   <button id="btnNotify">🔔 알림 켜기</button>
   <button id="btnExportExcel">📗 저장</button>
   <button id="btnReport" onclick="window.open('yesspot_report.html','_blank')">📊 통계</button>
@@ -3374,24 +3374,32 @@ document.getElementById('btnPurge').onclick = function(){
 // 아직 안 지우고, 아직 감시 중이면 신호 발생일이 아무리 오래됐어도
 // - 느린 타임프레임이라 26봉/26분 게이트를 오래 기다리는 중일 수 있으므로
 // - 절대 안 지웁니다)
-var PURGE_KEEP_PENDING_DAYS = 7; // [2026-07-23 변경] 6일 -> 7일
+var PURGE_KEEP_PENDING_DAYS = 7; // [2026-07-23 변경] 6일 -> 7일 (v5.29부터 아래 시간 기준 사용, 일 기준은 참고용으로만 남김)
+// [2026-10-01 변경] 신호달성 완전삭제는 "신호 시각 기준 24시간 이상 지난" 달성/무효/철회 신호만 지운다(브릿지에도 hours로 같은 기준 전달).
+var PURGE_KEEP_PENDING_HOURS = 24;
+function kstCutoffByHours(h){
+  return new Date(Date.now() - h * 3600 * 1000).toLocaleString('sv-SE', {timeZone:'Asia/Seoul'}); // "YYYY-MM-DD HH:MM:SS"
+}
 
 document.getElementById('btnPurgeKeepPending').onclick = function(){
-  var cutoff = daysAgoKST(PURGE_KEEP_PENDING_DAYS + 1);
+  var cutoff = kstCutoffByHours(PURGE_KEEP_PENDING_HOURS);
+  var KST_FMT = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/;
 
   var toKeep = allRows.filter(function(r){
     var isResolved = (r.achieveStatus === 'achieved' || r.achieveStatus === 'invalid' || r.achieveStatus === 'retracted');
     if (!isResolved) return true; // 감시중(대기중/빠짐/미확인 포함) - 나이 무관하게 무조건 보존
-    var isOld = (r.kst || '').slice(0, 10) < cutoff;
-    return !isOld; // 달성/무효로 끝났어도 최근 것이면 보존, 오래됐으면 삭제 대상
+    // 시각이 없거나 형식이 이상한 행은 "오래됨"으로 보지 않고 보존한다(이상한 행 삭제 방지)
+    if (!r.kst || !KST_FMT.test(r.kst)) return true;
+    var isOld = r.kst.slice(0, 19) < cutoff;
+    return !isOld; // 달성/무효로 끝났어도 24시간 안 지났으면 보존, 지났으면 삭제 대상
   });
   var removedCount = allRows.length - toKeep.length;
 
   if (removedCount === 0) {
-    alert('삭제할 항목이 없습니다 (달성/무효로 끝났으면서 ' + PURGE_KEEP_PENDING_DAYS + '일 지난 신호 없음).');
+    alert('삭제할 항목이 없습니다 (달성/무효로 끝났으면서 ' + PURGE_KEEP_PENDING_HOURS + '시간 지난 신호 없음).');
     return;
   }
-  if (!confirm('달성/무효로 끝난 신호 중 ' + PURGE_KEEP_PENDING_DAYS + '일 지난 ' + removedCount +
+  if (!confirm('달성/무효로 끝난 신호 중 ' + PURGE_KEEP_PENDING_HOURS + '시간 지난 ' + removedCount +
       '개를 완전히 삭제하시겠습니까?\n(감시중인 신호는 나이와 무관하게 전부 보존됩니다)\n' +
       '(원본 파일에서도 지워져서, 다시 접속해도 안 돌아옵니다)')) {
     return;
@@ -3401,7 +3409,7 @@ document.getElementById('btnPurgeKeepPending').onclick = function(){
   render();
 
   if (ws && ws.readyState === 1) {
-    ws.send(JSON.stringify({ cmd: 'purge_keep_pending', days: PURGE_KEEP_PENDING_DAYS }));
+    ws.send(JSON.stringify({ cmd: 'purge_keep_pending', days: PURGE_KEEP_PENDING_DAYS, hours: PURGE_KEEP_PENDING_HOURS }));
   } else {
     alert('브릿지와 연결이 안 되어있어 원본 파일은 못 지웠습니다.\n화면에서만 지워진 상태이니, 연결 복구 후 다시 눌러주세요.');
   }
