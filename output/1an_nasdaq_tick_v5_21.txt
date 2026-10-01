@@ -1,6 +1,6 @@
 // ================================================================================
-// [파일] NASDAQ100(NQZ26) 틱봉(1안, 5틱단위) | v5.19(수정시 버전+이력 필수 갱신)
-// [2026-09-30][v5.19 - 타임아웃 요청 증발 수정] 응답이 시간 안에 안 온 요청을 재시도큐/저품질 어디에도 안 넣고 지워서 [순환완료] "실제수신+저품질"이 총원과 안 맞던 것(실사례 162+7=169/195) 수정 - 이제 재시도큐로 보냄(원본 v5.14부터 있던 결함). v5.18(부하 회복) 포함.
+// [파일] NASDAQ100(NQZ26) 틱봉(1안, 5틱단위) | v5.21(수정시 버전+이력 필수 갱신)
+// [2026-10-01][v5.21 - 다이아몬드(보라/흰색) 기준 개편. v5.19(타임아웃 재시도 포함). 보라=평탄2봉+뾰족+왼쪽구름 4/8봉(즉시), 흰색=보라 통과+양쪽(왼6/8,오른6/8)구름+두께기준(삼각형 뒤 8봉 후). 기존 기준은 DIAMOND_CRITERIA_LEGACY=true 로 복원. 새 신호부터 적용(이미 표시된 과거 행의 보라는 바뀌지 않음).
 // [2026-09-30][v5.17 - 차트봉 카운트를 단일 기준값으로 통일] 사용자 실측: 알림의 차트 카운트(1160/327/1263)가 실제 차트(1162/330/1280)와 0.2~1.3% 내로 일치,
 //   실시간이 센 값(82/277/1060)은 크게 어긋남 -> 차트 완결봉 수(마지막 봉/filled 제외)를 모든 기능의 기준값으로 사용.
 //   (1)워밍업 재판정이 창이 신호를 덮을 때 영속 카운터를 차트 기준 봉수로 직접 기록 - 26봉 게이트/판정사유(gate=N/26)/게이트 신뢰성 검사가 같은 값을 봄
@@ -1068,6 +1068,51 @@ TickBarBuilder.prototype.onTick = function (price, sdate, stime) {
     if (this.count >= this.n) { var bar = { high: this.high, low: this.low, sdate: this.lastSdate, stime: this.lastStime }; this.count = 0; this.high = null; this.low = null; return bar; }
     return null;
 };
+
+// ================================================================================
+// [신규][2026-10-01][v5.21 다이아몬드(보라/흰색) 기준 개편] 사용자 설계:
+//  - 신호 구조: 평탄한 SB 위에서 SA가 삼각형으로 솟는 모양이고, 삼각형 양옆에는 삼각형과 "반대색" 구름(BULL이면 SA<SB, BEAR면 SA>SB)이 있다.
+//    (삼각형 색이 구름과 반대인 것은 신호 자체이므로 제외 사유가 아님. 구름이 삼각형 앞뒤로 바로 뒤집히는 유형은 보류)
+//  - 보라 💎 = 즉시성: 삼각형 완성 봉에서 바로. 평탄 2봉 이상 + 뾰족한 삼각형 + 왼쪽 8봉 중 4봉 이상에 구름(두께 기준 없음).
+//  - 흰색 ◇ = 완성도(보라보다 높은 기준): 보라 통과 신호만 대상. 삼각형 뒤 8봉이 쌓인 시점에
+//    왼쪽 8봉 중 6봉 이상 구름 + 평균두께>=기준(신호 시점에 계산), 오른쪽 8봉 중 6봉 이상 구름 + 평균두께>=기준.
+//    두께 기준 = ATR(선행스팬A 14봉 평균변화) x PRETTY_TRIANGLE_RATIO(0.15).
+//  - 기존 기준(v5.20 이전: checkPrettyTriangle 골깊이/이전언덕/확장 + 흰색 케이스1/2/3)은 함수째 그대로 남겨뒀다.
+//    아래 DIAMOND_CRITERIA_LEGACY 를 true 로 바꾸면 기존 기준으로 복원된다.
+// ================================================================================
+var DIAMOND_CRITERIA_LEGACY = false;   // true = 기존(v5.20 이전) 보라/흰색 기준으로 복원
+var DIAMOND_MIN_FLAT_RUN = 2;          // 보라: 평탄구간 최소 봉수
+var DIAMOND_PURPLE_LEFT_MIN_BARS = 4;  // 보라: 왼쪽 8봉 중 구름이 있어야 하는 최소 봉수
+var DIAMOND_WHITE_SIDE_MIN_BARS = 6;   // 흰색: 왼쪽/오른쪽 8봉 중 구름이 있어야 하는 최소 봉수
+function diamondCloudThickness(sa, sb, i, isBull) { return isBull ? (sb[i] - sa[i]) : (sa[i] - sb[i]); } // 삼각형과 반대색 구름이면 양수
+function diamondSideStats(sa, sb, from, isBull) {
+    var n = PRETTY_TRIANGLE2_LOOKAHEAD_BARS, cnt = 0, sum = 0;
+    if (sa.length < from + n || sb.length < from + n) return { cnt: 0, avg: 0, enough: false };
+    for (var i = from; i < from + n; i++) {
+        var t = diamondCloudThickness(sa, sb, i, isBull);
+        if (t > 0) { cnt++; sum += t; }
+    }
+    return { cnt: cnt, avg: sum / n, enough: true };
+}
+// 보라: 삼각형 완성 시점. leftFrom = 삼각형 왼쪽 첫 봉 index(폭1 신호=2, 폭2 신호=3)
+function checkDiamondPurpleNew(sa, sb, isBull, leftFrom, flatRun, apexSharp) {
+    var out = { ok: false, leftStrict: false };
+    if (!apexSharp || !(flatRun >= DIAMOND_MIN_FLAT_RUN)) return out;
+    var left = diamondSideStats(sa, sb, leftFrom, isBull);
+    if (!left.enough || left.cnt < DIAMOND_PURPLE_LEFT_MIN_BARS) return out;
+    out.ok = true;
+    var threshold = computeAtrFromHist(sa) * PRETTY_TRIANGLE_RATIO;
+    out.leftStrict = left.cnt >= DIAMOND_WHITE_SIDE_MIN_BARS && left.avg >= threshold; // 흰색의 왼쪽 조건(신호 시점에 미리 계산해 둠)
+    return out;
+}
+// 흰색: 삼각형 뒤 8봉이 쌓인 시점(index 0..7 = 새로 쌓인 8봉). leftStrict 는 보라 통과 시점에 계산한 값.
+function evalDiamondWhiteNew(sa, sb, isBull, leftStrict) {
+    if (!leftStrict) return { matched: false, cases: [] };
+    var right = diamondSideStats(sa, sb, 0, isBull);
+    var threshold = computeAtrFromHist(sa) * PRETTY_TRIANGLE_RATIO;
+    var ok = right.enough && right.cnt >= DIAMOND_WHITE_SIDE_MIN_BARS && right.avg >= threshold;
+    return { matched: ok, cases: ok ? [4] : [] }; // 케이스 4 = 신기준(왼쪽+오른쪽 구름 확인)
+}
 function SignalCalculator() {
     this.ex9h = new SlidingExtreme(9, 'max'); this.ex9l = new SlidingExtreme(9, 'min');
     this.ex26h = new SlidingExtreme(26, 'max'); this.ex26l = new SlidingExtreme(26, 'min');
@@ -1110,7 +1155,7 @@ SignalCalculator.prototype.onBar = function (high, low, sdate, stime) {
             var pc = this.pendingPretty2[p2i];
             pc.bars++;
             if (pc.bars >= PRETTY_TRIANGLE2_LOOKAHEAD_BARS) {
-                var rc = evalRightCloudCases(this.saHist, this.sbHist, pc.isBull);
+                var rc = DIAMOND_CRITERIA_LEGACY ? evalRightCloudCases(this.saHist, this.sbHist, pc.isBull) : evalDiamondWhiteNew(this.saHist, this.sbHist, pc.isBull, pc.leftStrict); // [v5.21] 신기준(기존은 LEGACY 플래그로 복원)
                 this.pretty2Events.push({ sdate: pc.sdate, stime: pc.stime, price: pc.price, kind: pc.kind, confirmed: rc.matched, cases: rc.cases });
                 this.pendingPretty2.splice(p2i, 1);
             }
@@ -1136,12 +1181,13 @@ SignalCalculator.prototype.onBar = function (high, low, sdate, stime) {
             apexSharpB = (Math.abs(apexHeightB - apexH2B) / maxHB) >= APEX_SHARP_HEIGHT_RATIO;
             if (apexH2B > apexHeightB) { apexIdxB = 2; apexHeightB = apexH2B; }
         }
-        var isPrettyB = checkPrettyTriangle(this.saHist, this.sbHist, true);
+        var dB = DIAMOND_CRITERIA_LEGACY ? null : checkDiamondPurpleNew(this.saHist, this.sbHist, true, st.b2 ? 3 : 2, st.b2 ? st.flatRun2 : st.flatRun1, apexSharpB);
+        var isPrettyB = DIAMOND_CRITERIA_LEGACY ? checkPrettyTriangle(this.saHist, this.sbHist, true) : dB.ok; // [v5.21] 기존 기준은 LEGACY 플래그로 복원
         var writeSdateB = this.sdateHist[originIdxB] || sdate, writeStimeB = this.stimeHist[originIdxB] || stime, kindB = st.b2 ? 'BULL2' : 'BULL1';
         results.push({ sdate: writeSdateB, stime: writeStimeB, price: SB, kind: kindB, leftFlatStar: st.b2 ? st.b2Star : st.b1Star,
             apexSdate: this.sdateHist[apexIdxB] || sdate || "", apexStime: this.stimeHist[apexIdxB] || stime || "", apexHeight: apexHeightB, trueSdate: sdate, trueStime: stime,
             leftFlatRun: st.b2 ? st.flatRun2 : st.flatRun1, apexSharp: apexSharpB, isPrettyTriangle: isPrettyB }); // [신규][2026-09-10][목표삼각형 표시용]
-        if (isPrettyB) this.pendingPretty2.push({ bars: 0, isBull: true, sdate: writeSdateB, stime: writeStimeB, price: SB, kind: kindB });
+        if (isPrettyB) this.pendingPretty2.push({ bars: 0, isBull: true, sdate: writeSdateB, stime: writeStimeB, price: SB, kind: kindB, leftStrict: dB ? dB.leftStrict : false });
     }
     if (st.s1 || st.s2) {
         var lfS = st.s2 ? st.lf2 : st.lf1;
@@ -1154,12 +1200,13 @@ SignalCalculator.prototype.onBar = function (high, low, sdate, stime) {
             apexSharpS = (Math.abs(apexHeightS - apexH2S) / maxHS) >= APEX_SHARP_HEIGHT_RATIO;
             if (apexH2S > apexHeightS) { apexIdxS = 2; apexHeightS = apexH2S; }
         }
-        var isPrettyS = checkPrettyTriangle(this.saHist, this.sbHist, false);
+        var dS = DIAMOND_CRITERIA_LEGACY ? null : checkDiamondPurpleNew(this.saHist, this.sbHist, false, st.s2 ? 3 : 2, st.s2 ? st.flatRun2 : st.flatRun1, apexSharpS);
+        var isPrettyS = DIAMOND_CRITERIA_LEGACY ? checkPrettyTriangle(this.saHist, this.sbHist, false) : dS.ok; // [v5.21] 기존 기준은 LEGACY 플래그로 복원
         var writeSdateS = this.sdateHist[originIdxS] || sdate, writeStimeS = this.stimeHist[originIdxS] || stime, kindS = st.s2 ? 'BEAR2' : 'BEAR1';
         results.push({ sdate: writeSdateS, stime: writeStimeS, price: SB, kind: kindS, leftFlatStar: st.s2 ? st.s2Star : st.s1Star,
             apexSdate: this.sdateHist[apexIdxS] || sdate || "", apexStime: this.stimeHist[apexIdxS] || stime || "", apexHeight: apexHeightS, trueSdate: sdate, trueStime: stime,
             leftFlatRun: st.s2 ? st.flatRun2 : st.flatRun1, apexSharp: apexSharpS, isPrettyTriangle: isPrettyS }); // [신규][2026-09-10][목표삼각형 표시용]
-        if (isPrettyS) this.pendingPretty2.push({ bars: 0, isBull: false, sdate: writeSdateS, stime: writeStimeS, price: SB, kind: kindS });
+        if (isPrettyS) this.pendingPretty2.push({ bars: 0, isBull: false, sdate: writeSdateS, stime: writeStimeS, price: SB, kind: kindS, leftStrict: dS ? dS.leftStrict : false });
     }
     return results;
 };

@@ -2510,7 +2510,7 @@ function buildPrettyTriangleHtml(r){
 // [신규][2026-09-26][케이스분리] 케이스 번호 -> 사람이 읽을 짧은 설명.
 // 스크립트 checkRightCloudCase1/2/3_*의 이름과 1:1로 대응시켜서, 나중에
 // 스크립트 쪽 케이스 정의가 바뀌면 여기 이름도 같이 맞춰주면 된다.
-var PRETTY2_CASE_NAMES = { '1': '두께평균', '2': '얇지만유지', '3': '짧은역전허용' };
+var PRETTY2_CASE_NAMES = { '1': '두께평균', '2': '얇지만유지', '3': '짧은역전허용', '4': '신기준(왼쪽+오른쪽 구름 확인)' }; // [2026-10-01] 4 = 스크립트 v5.21 신기준
 function buildWhiteDiamondHtml(r){
   if (!r.prettyTriangle2) return '';
   // [수정][2026-09-26][사용자 요청] "◇" 별도 기호 대신, 기존 다이아몬드(💎)와
