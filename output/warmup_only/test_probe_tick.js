@@ -1,8 +1,8 @@
 // 가짜 엔진: 실시간 틱 스트림과 차트 틱봉을 같은 틱에서 만들되, 차트의 봉 경계 시작 위치(origin)를 모른 채 어긋나게 만든다.
 const vm=require('vm'),fs=require('fs');
-function run({dropRate=0,origin=17,N=50,seconds=900,tps=3}){
+function run({dropRate=0,origin=17,N=30,seconds=150,tps=3}){
   let now=1e12,t={},logs=[];const ctx0={};
-  const code=fs.readFileSync('1an_gold_tick_probe.txt','utf8').replace(/var COLLECT_SEC = \d+;/,'var COLLECT_SEC = '+seconds+';').replace(/var CHART_COUNT = \d+;/,'var CHART_COUNT = 600;');
+  const code=fs.readFileSync('1an_gold_tick_probe.txt','utf8').replace(/var COLLECT_SEC = \d+;/,'var COLLECT_SEC = '+seconds+';');
   const D=Date.UTC(2026,9,1,12,0,0)/1000;
   // 원본 틱 스트림(차트가 보는 것): 과거 10000틱 + 수집 구간
   const total=10000+seconds*tps;const all=[];let px=4200;
@@ -15,7 +15,7 @@ function run({dropRate=0,origin=17,N=50,seconds=900,tps=3}){
     GetSDate:(k,i)=>Number(fmtT(chartBars[chartBars.length-1-i].sec)[0]),GetSTime:(k,i)=>{const [h,m,s]=fmtT(chartBars[chartBars.length-1-i].sec)[1].split(':').map(Number);return (h*10000+m*100+s)*10000},GetIndicatorData:()=>N};
   const ctx={Date:class extends Date{constructor(...a){a.length?super(...a):super(now)}static now(){return now}},Math,Number,Array,isFinite,console,CHART_PERIOD_TICK:1,CHART_REQCOUNT_BAR:1,ReqChartItem:function(){},IndicatorInfo:function(){},
     Main:{MessageLog:m=>logs.push(m),ReqMarketData(){},SetTimer:(i,m)=>t[i]=now+m,KillTimer:i=>delete t[i],RemoveObject(){},ReqChartEx(){setTimeout(()=>{},0);ctx.__pending=true;return true}}};
-  vm.createContext(ctx);vm.runInContext(code.replace('var CYCLE = 50;','var CYCLE = '+N+';'),ctx);ctx.Main_OnStart();
+  vm.createContext(ctx);vm.runInContext(code.replace(/var CYCLE = \d+;/,'var CYCLE = '+N+';'),ctx);ctx.Main_OnStart();
   // 실시간 틱 공급: 수집구간 틱만, dropRate 만큼 누락
   let rnd=12345;const rr=()=>{rnd=(rnd*1664525+1013904223)%4294967296;return rnd/4294967296};
   for(let i=10000;i<total;i++){if(rr()<dropRate)continue;const [d,tm]=fmtT(all[i].sec);ctx.Main_OnRcvMarketData({current:all[i].p,date:d,time:tm.replace(/:/g,'')+'0000'});ctx.Main_OnUpdateMarket('GCZ26',20001,0);}
