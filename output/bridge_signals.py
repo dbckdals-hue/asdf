@@ -561,6 +561,7 @@ _LIVE_SEED_WHY_KR = {
     "fail": "원인 미상",
 }
 def compose_live_seed_reason(total, ok, fail, fail_items, pass_no):
+    # [수정][2026-10-01] 알림에는 어긋난 결과만, 사유별 건수로 보여준다(프레임별 상세는 스크립트의 이어받기 전용 진단파일).
     suffix = f" ({pass_no}번째 순환)" if pass_no else ""
     try:
         nfail = int(fail)
@@ -568,14 +569,12 @@ def compose_live_seed_reason(total, ok, fail, fail_items, pass_no):
         nfail = 0
     if nfail <= 0:
         return f"{total}개 프레임 전부 이어받기 성공{suffix}"
-    bits = []
+    counts = {}
     for it in fail_items:
-        if ":" in it:
-            lab, why = it.split(":", 1)
-            bits.append(f"{lab}({_LIVE_SEED_WHY_KR.get(why, why)})")
-        else:
-            bits.append(it)
-    return f"{total}개 중 성공 {ok} / 실패 {fail} - " + ", ".join(bits) + suffix
+        why = it.split(":", 1)[1] if ":" in it else it
+        counts[why] = counts.get(why, 0) + 1
+    bits = [f"{_LIVE_SEED_WHY_KR.get(w, w)} {n}건" for w, n in counts.items()]
+    return f"{total}개 중 실패 {fail} - " + ", ".join(bits) + " (상세: 이어받기 진단파일)" + suffix
 def compose_gate_sync_reason(sig_kind, live, chart, cause, detail):
     kv = _gate_sync_kv(detail)
     try:

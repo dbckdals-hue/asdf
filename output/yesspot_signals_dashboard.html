@@ -58,7 +58,7 @@
   3. 예스트레이더에서 예스스팟 전략(6개 중 원하는 것) 실행
   4. 이 화면에 실시간으로 신호가 쌓이는 것을 확인
 ================================================================================
-[버전] 2026-10-01 v5.24
+[버전] 2026-10-01 v5.25
 [버전관리 규칙] 이 파일을 수정할 때마다(사소한 수정 포함) 반드시 위 [버전] 값을
   소수점 둘째자리 기준으로 올리고(v1.00->v1.01->v1.02..., 구조가 크게 바뀌면
   v2.00처럼 정수부를 올림), 아래 [변경이력]에 한 줄 추가할 것. 예스스팟 스크립트
@@ -3802,19 +3802,18 @@ function handleDegradedDeferred(sig){
 // 남기는 GATE_COUNT_SYNC를 한 줄로 보여준다(원인 수치는 브릿지가 조립한 sig.reason에 이미 들어 있음).
 // 판정/감시목록과는 무관한 진단 알림이라 신호테이블에는 안 넣는다. 과거 이력 재생 중(isLive=false)엔 무시.
 // [신규][2026-10-01][스크립트 v5.24] 실시간 이어받기(LIVE_SEED) 결과 알림 - 스크립트가 순환 끝에 한 줄로 보낸 요약(성공/실패 프레임 목록)을 알림 1건으로 표시.
-// 실패가 있거나 첫 순환일 때만 띄운다(전부 성공한 이후 순환은 조용히). 과거 이력 재생 중(isLive=false)엔 무시.
+// 실패가 있을 때만 띄운다(전부 성공이면 조용히). 프레임별 상세는 스크립트의 이어받기 전용 진단파일. 과거 이력 재생 중(isLive=false)엔 무시.
 var liveSeedLastAt = {};
 function handleLiveSeedSummary(sig){
   if (!isLive) return;
   var fail = parseInt(sig.seedFail, 10) || 0;
-  var firstPass = String(sig.seedPass) === '1';
-  if (fail <= 0 && !firstPass) return;
+  if (fail <= 0) return; // [수정][2026-10-01] 어긋난(실패) 결과만 알림 - 전부 성공이면 띄우지 않음
   var src = (sig.label && sig.label.charAt(0) === 'T') ? '틱봉' : '분봉';
   var key = sig.item + '|' + src;
   var now = Date.now();
   if (liveSeedLastAt[key] && (now - liveSeedLastAt[key]) < 60000) return;
   liveSeedLastAt[key] = now;
-  showInPageAlertLine((fail > 0 ? '🟠' : '🟢') + ' 이어받기 ' + sig.item + ' ' + src + ' ' + (sig.reason || ''));
+  showInPageAlertLine('🟠 이어받기 ' + sig.item + ' ' + src + ' ' + (sig.reason || ''));
 }
 var gateSyncLastAt = {}; // key(item|label|신호종류) -> 마지막 알림시각(ms)
 var GATE_SYNC_COOLDOWN_MS = 60000;
