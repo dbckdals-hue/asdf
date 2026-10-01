@@ -58,13 +58,15 @@
   3. 예스트레이더에서 예스스팟 전략(6개 중 원하는 것) 실행
   4. 이 화면에 실시간으로 신호가 쌓이는 것을 확인
 ================================================================================
-[버전] 2026-09-30 v5.15
+[버전] 2026-10-01 v5.22
 [버전관리 규칙] 이 파일을 수정할 때마다(사소한 수정 포함) 반드시 위 [버전] 값을
   소수점 둘째자리 기준으로 올리고(v1.00->v1.01->v1.02..., 구조가 크게 바뀌면
   v2.00처럼 정수부를 올림), 아래 [변경이력]에 한 줄 추가할 것. 예스스팟 스크립트
   (min/tick)와 세트로 움직이는 파일이라, 버전을 안 올리면 서버 스크립트와
   대시보드 중 어느 조합이 실제로 배포됐는지 나중에 구분할 방법이 없어진다.
 [변경이력]
+  v5.22 (2026-10-01): [저품질이관 알림 묶음 표시 - 스크립트 v5.22/브릿지와 세트] 프레임마다 따로 뜨던 알림을, 스크립트가 순환 끝에 한 줄로 보내는
+    묶음 줄(DEGRADED_DEFERRED 8번째 필드)을 받아 종목/분·틱별 알림 1건(건수+프레임 목록)으로 표시. 예전 형식(프레임당 1줄)도 그대로 처리.
   v5.15 (2026-09-30): [GATE_COUNT_SYNC 알림 - 스크립트 v5.16/브릿지와 세트] 게이트 카운터(실시간이 센 봉 수)와
     차트 기준 봉 수가 2 이상 다를 때 스크립트가 남기는 진단줄을 알림창에 한 줄로 표시(저품질이관과 같은 방식,
     원인 수치는 브릿지가 조립). 신호테이블/판정/감시목록은 건드리지 않음.
@@ -3774,16 +3776,21 @@ function handleDegradedDeferred(sig){
   // 문제가 아니라 순수 대시보드 표시단 버그였다. 다른 5개 알람 함수와
   // 동일하게 isLive 검사를 추가.
   if (!isLive) return;
-  var key = sig.item + '|' + sig.label;
+  // [수정][2026-10-01][스크립트 v5.22] 순환 끝에 한 줄로 묶어 오는 경우(sig.degradedBatch): 종목/분·틱별로 알림 1건에 프레임 목록을 모아서 표시.
+  // 묶음 줄은 순환당 1번만 오므로 쿨다운은 라벨이 아니라 종목+분/틱 구분으로 건다. 예전 형식(프레임당 1줄)은 아래 그대로.
+  var isBatch = !!sig.degradedBatch;
+  var src = (sig.label && sig.label.charAt(0) === 'T') ? '틱봉' : '분봉';
+  var key = isBatch ? (sig.item + '|BATCH|' + src) : (sig.item + '|' + sig.label);
   var now = Date.now();
   if (degradedDeferredLastAt[key] && (now - degradedDeferredLastAt[key]) < DEGRADED_DEFERRED_COOLDOWN_MS) return;
   degradedDeferredLastAt[key] = now;
   var detail = sig.reason || ('주기=' + sig.price);
-  var line = '🟡 저품질이관 ' + sig.item + ' ' + sig.label + ' - ' + detail;
+  var who = isBatch ? (sig.item + ' ' + src) : (sig.item + ' ' + sig.label);
+  var line = '🟡 저품질이관 ' + who + ' ' + (isBatch ? '' : '- ') + detail;
   showInPageAlertLine(line);
   if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
     try {
-      var n = new Notification('🟡 타임프레임 저품질 이관', { body: sig.item + ' ' + sig.label + ' - ' + detail, tag: 'degraded-deferred-' + key });
+      var n = new Notification('🟡 타임프레임 저품질 이관', { body: who + ' - ' + detail, tag: 'degraded-deferred-' + key });
       n.onclick = function(){ window.focus(); n.close(); };
     } catch(e) { console.error('[저품질이관 알림 오류]', e); }
   }

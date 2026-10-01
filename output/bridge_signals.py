@@ -656,7 +656,16 @@ def parse_line(line):
             # 화면(MessageLog)에만 남고 대시보드로는 전혀 전달되지 않았다
             # (만들기로 했던 기능이 실제로는 안 만들어져 있었던 것을 뒤늦게
             # 확인). parts[5]=주기(cycle), parts[6]=소진된 재시도횟수.
-            if len(parts) >= 7:
+            # [수정][2026-10-01][스크립트 v5.22] 순환 끝에 새로 저품질이 된 프레임을 한 줄에 모아 보낸다:
+            # parts[5]=개수, parts[6]=소진된 재시도횟수, parts[7]=라벨1|라벨2|... (8번째 필드가 있으면 묶음 줄).
+            # 예전 형식(프레임당 1줄, parts[5]=주기)도 그대로 읽는다.
+            if len(parts) >= 8 and parts[7]:
+                labels = [x for x in parts[7].split("|") if x]
+                result["degradedBatch"] = True
+                result["degradedCount"] = parts[5]
+                result["degradedList"] = labels
+                result["reason"] = parts[5] + "건 - " + ", ".join(labels) + " (재시도=" + parts[6] + "회 소진 - 다음 순환으로 이관)"
+            elif len(parts) >= 7:
                 result["reason"] = "주기=" + parts[5] + " 재시도=" + parts[6] + "회 소진 - 다음 순환으로 이관"
         elif result["kind"] == "GATE_COUNT_SYNC":
             # [신규][2026-09-30] 형식: item,tf,GATE_COUNT_SYNC,date,time,신호종류,실시간카운터,차트카운터,원인코드,상세(key=value|...)

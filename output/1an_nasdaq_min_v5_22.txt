@@ -1,6 +1,6 @@
 // ================================================================================
-// [파일] NASDAQ100(NQZ26) 분봉(1안) | v5.21(수정시 버전+이력 필수 갱신)
-// [2026-10-01][v5.21 - 다이아몬드(보라/흰색) 기준 개편. v5.20(게이트 25봉) 포함. 보라=평탄2봉+뾰족+왼쪽구름 4/8봉(즉시), 흰색=보라 통과+양쪽(왼6/8,오른6/8)구름+두께기준(삼각형 뒤 8봉 후). 기존 기준은 DIAMOND_CRITERIA_LEGACY=true 로 복원. 새 신호부터 적용(이미 표시된 과거 행의 보라는 바뀌지 않음).
+// [파일] NASDAQ100(NQZ26) 분봉(1안) | v5.22(수정시 버전+이력 필수 갱신)
+// [2026-10-01][v5.22 - 저품질이관 알림 묶음] 프레임마다 보내던 DEGRADED_DEFERRED 줄을 없애고, 순환 끝(재시도까지 끝난 시점)에 이번 순환에서 새로 저품질이 된 프레임을 한 줄(개수,재시도횟수,라벨1|라벨2|...)로 보냄. 브릿지/대시보드 v5.22와 세트. v5.21(다이아몬드 신기준) 포함.
 // [2026-09-30][v5.17 - 차트봉 카운트를 단일 기준값으로 통일] 사용자 실측: 알림의 차트 카운트(1160/327/1263)가 실제 차트(1162/330/1280)와 0.2~1.3% 내로 일치,
 //   실시간이 센 값(82/277/1060)은 크게 어긋남 -> 차트 완결봉 수(마지막 봉/filled 제외)를 모든 기능의 기준값으로 사용.
 //   (1)워밍업 재판정이 창이 신호를 덮을 때 영속 카운터를 차트 기준 봉수로 직접 기록 - 26봉 게이트/판정사유(gate=N/26)/게이트 신뢰성 검사가 같은 값을 봄
@@ -2289,6 +2289,7 @@ function buildTargetList() {
 // 타임프레임을 이번 순환 안에서 재시도큐에 넣어 곧바로 재시도하고, 소진되면
 // degradedPeriods로 표시(다음 순환에서 retryAttempts가 초기화되며 계속
 // 재시도된다 - 완전 포기가 아니라 "이번 순환 안 즉시재시도"만 소진).
+var degradedNewThisPass = []; // [v5.22] 이번 순환에서 재시도를 다 쓰고 저품질로 확정된 라벨(순환 끝에 한 번에 알림)
 function recordFailureForRetry(target) {
     var fileLabel = formatLabel(target.cycle);
     var attempts = retryAttempts[fileLabel] || 0;
@@ -2310,10 +2311,9 @@ function recordFailureForRetry(target) {
         // [신규][2026-09-25][대시보드 모달 알림] 화면(MessageLog)에만 남기던
         // 걸 신호파일에도 남겨서 bridge_signals.py/대시보드가 실시간으로
         // 알 수 있게 한다. 형식: item,fileLabel,DEGRADED_DEFERRED,date,time,cycle,재시도횟수
-        try {
-            var degWhenParts = nowServerTimeStr().split(" ");
-            timedPrintOnFile(OUTPUT_FILE, (currentItemName || INSTRUMENT_NAME) + "," + fileLabel + ",DEGRADED_DEFERRED," + degWhenParts[0] + "," + degWhenParts[1] + "," + target.cycle + "," + MAX_RETRY_ATTEMPTS + "\n");
-        } catch (eDeg) {}
+        // [수정][2026-10-01][v5.22] 프레임마다 DEGRADED_DEFERRED 줄을 따로 보내던 것을 없애고, 이번 순환에서 저품질로 확정된 라벨만 모아뒀다가
+        // 순환 끝(재시도까지 다 끝난 시점)에 한 줄로 보낸다(아래 degradedNewThisPass 처리 참고). 예전 형식(프레임당 1줄)은 대시보드/브릿지가 계속 읽을 수는 있다.
+        if (degradedNewThisPass.indexOf(fileLabel) === -1) degradedNewThisPass.push(fileLabel);
     }
 }
 
@@ -2472,6 +2472,15 @@ function processNext() {
             var _finalFilledCount = Object.keys(filledCycles).length;
             var _finalDegradedCount = degradedList.length;
             if (degradedList.length > 0) logMsg("!! [1안] " + degradedList.length + "개 타임프레임 저품질(degraded) 유지중: " + degradedList.join(", "));
+            // [신규][2026-10-01][v5.22] 이번 순환에서 새로 저품질로 확정된 프레임을 대시보드 알림용으로 한 줄에 모아서 보낸다.
+            // 형식: item,첫라벨,DEGRADED_DEFERRED,date,time,개수,재시도횟수,라벨1|라벨2|... (8번째 필드가 있으면 묶음 줄)
+            if (degradedNewThisPass.length > 0) {
+                try {
+                    var degWhenParts = nowServerTimeStr().split(" ");
+                    timedPrintOnFile(OUTPUT_FILE, (currentItemName || INSTRUMENT_NAME) + "," + degradedNewThisPass[0] + ",DEGRADED_DEFERRED," + degWhenParts[0] + "," + degWhenParts[1] + "," + degradedNewThisPass.length + "," + MAX_RETRY_ATTEMPTS + "," + degradedNewThisPass.join("|") + "\n");
+                } catch (eDeg) {}
+                degradedNewThisPass = [];
+            }
             targetList = baseTargetList; // [2026-09-02][재시도보완] 재시도로 늘어났던 targetList를 원래 110개로 복원
             completedCycles = {};
             filledCycles = {}; // [2026-09-25 신규] 새 순환 시작이니 실제채움 카운터도 같이 초기화
