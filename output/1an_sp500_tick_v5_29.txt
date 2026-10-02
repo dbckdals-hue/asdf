@@ -1,6 +1,6 @@
 // ================================================================================
 // [파일] SP500(ESZ26) 틱봉(1안, 5틱단위) | v5.29(수정시 버전+이력 필수 갱신)
-// [2026-10-02][v5.29] 게이트 열림 봉 이력 추가: 게이트가 열리는 봉(분 25봉/틱 26봉)의 시각·고가·저가를 신호 이력에 GATE_OPEN으로 1회(실시간 src=L, 워밍업 src=W) 기록. 판정/게이트 로직은 변경 없음. 대시보드(이력 모달 '게이트열림')와 세트.
+// [2026-10-02][v5.29] 게이트 열림 봉 이력 추가: 게이트가 열리는 봉(분 25봉/틱 26봉)의 시각·고가·저가를 신호 이력에 GATE_OPEN으로 1회(실시간 src=REAL, 워밍업 src=WARM) 기록. 판정/게이트 로직은 변경 없음. 대시보드(이력 모달 '게이트열림')와 세트.
 // [2026-10-01][v5.28] 다이아몬드 수정: 흰색=왼쪽 평탄 3봉 이상+왼쪽 8봉 중 6봉 구름(두께 제외)+오른쪽 평탄 3봉(신호봉 포함) 동안 SB 불변·구름 유지, 신호 뒤 2봉째 등록(기존 8봉째). 보라=그대로(오른쪽 평탄 1봉은 기본신호가 이미 확인). 소스에 [왼쪽평탄구간]/[오른쪽평탄구간]/[삼각형]/[왼쪽구름층]/[오른쪽구름층]/[등록시점] 주석 표시.
 // [2026-10-01][v5.27] 흰색 다이아몬드 조건 추가: 앞쪽 평탄구간 3봉 이상(DIAMOND_WHITE_MIN_FLAT_RUN). 보라(2봉 이상)는 그대로.
 // [2026-10-01][v5.26 - 최종 정리] 확인용 진단/알림 제거(카운터 불일치 GATE_COUNT_SYNC 줄·알림, 이어받기 진단파일·결과 알림). 기능은 유지: 실시간 빌더 이어받기(v5.23), 카운터 차트 기준 교정, 저품질이관 묶음 알림(v5.22), 다이아몬드 신기준(v5.21), 타임아웃 재시도(v5.19). 이어받기를 끄려면 LIVE_SEED_ENABLED=false.
@@ -1605,7 +1605,7 @@ function formatHistoryWhen(whenStr) { if (typeof whenStr !== "string") return wh
 // 대신, 각 항목의 실제 시각(epoch)을 기준으로 항상 올바른 시간순 위치에
 // 삽입한다 - 같은 epoch끼리는 기존 호출순서를 그대로 유지(안정정렬).
 // [2026-10-02 신규][게이트 열림 봉 이력] 게이트가 열리는 그 봉(분 25봉째/틱 26봉째)의 시각과 고가/저가를 신호 이력에 한 번 남겨,
-// 게이트 시점이 실제 차트와 맞는지 확인할 수 있게 한다. src=L(실시간 완결봉이 센 시점), src=W(워밍업 재생이 센 시점) - 출처별로 신호당 1회씩만.
+// 게이트 시점이 실제 차트와 맞는지 확인할 수 있게 한다. src=REAL(실시간 완결봉이 센 시점), src=WARM(워밍업 재생이 센 시점) - 출처별로 신호당 1회씩만.
 // 판정/게이트 로직은 건드리지 않고 이력 문자열만 추가한다(쉼표/세미콜론 없이 공백 구분 - 하트비트/사유 필드 구분자와 충돌 방지).
 function logGateOpenOnce(sig, src, whenStr, high, low, n) {
     try {
@@ -1805,7 +1805,7 @@ function resolveHistorically(sig, bars) {
         if (barEpoch > judgedFromEpoch) { sig.lastJudgedBarEpoch = barEpoch; judgedFromEpoch = barEpoch; }
         if (windowCovers) sig.barsElapsedSinceRegistration = trueBarCountAsOfThisBar;
         var gateOpen = (trueBarCountAsOfThisBar >= REQUIRED_BAR_DELAY);
-        if (gateOpen && windowCovers) logGateOpenOnce(sig, "W", bar.sdate + " " + bar.stime, bar.high, bar.low, trueBarCountAsOfThisBar); // [게이트 열림 봉 이력] // [2026-09-29] 영속카운터 대신 이 봉 시점 기준 카운트 사용
+        if (gateOpen && windowCovers) logGateOpenOnce(sig, "WARM", bar.sdate + " " + bar.stime, bar.high, bar.low, trueBarCountAsOfThisBar); // [게이트 열림 봉 이력] // [2026-09-29] 영속카운터 대신 이 봉 시점 기준 카운트 사용
         var firstPrice, secondPrice;
         if (sig.isBull) { firstPrice = bar.low; secondPrice = bar.high; } else { firstPrice = bar.high; secondPrice = bar.low; }
         if (!gateOpen) {
@@ -2088,7 +2088,7 @@ function processLiveBar(period, high, low, sdate, stime) {
         if (s.tf === label) {
             var _gOld = s.barsElapsedSinceRegistration || 0;
             s.barsElapsedSinceRegistration = (s.barsElapsedSinceRegistration || 0) + 1;
-            if (_gOld < REQUIRED_BAR_DELAY && s.barsElapsedSinceRegistration >= REQUIRED_BAR_DELAY) logGateOpenOnce(s, "L", sdate + " " + stime, high, low, s.barsElapsedSinceRegistration); // [게이트 열림 봉 이력]
+            if (_gOld < REQUIRED_BAR_DELAY && s.barsElapsedSinceRegistration >= REQUIRED_BAR_DELAY) logGateOpenOnce(s, "REAL", sdate + " " + stime, high, low, s.barsElapsedSinceRegistration); // [게이트 열림 봉 이력]
             s._liveBars = (s._liveBars || 0) + 1;
             s.lastAppliedBarEpoch = barEpochNow;
             // [근본수정][2026-09-26][v5.4][실시간-재워밍업 인수인계 중복이력]
@@ -2131,7 +2131,7 @@ function processRealtimeOnlyBar(period, high, low, sdate, stime) {
         if (s.period === period) {
             var _gOld = s.barsElapsedSinceRegistration || 0;
             s.barsElapsedSinceRegistration = (s.barsElapsedSinceRegistration || 0) + 1;
-            if (_gOld < REQUIRED_BAR_DELAY && s.barsElapsedSinceRegistration >= REQUIRED_BAR_DELAY) logGateOpenOnce(s, "L", sdate + " " + stime, high, low, s.barsElapsedSinceRegistration); // [게이트 열림 봉 이력]
+            if (_gOld < REQUIRED_BAR_DELAY && s.barsElapsedSinceRegistration >= REQUIRED_BAR_DELAY) logGateOpenOnce(s, "REAL", sdate + " " + stime, high, low, s.barsElapsedSinceRegistration); // [게이트 열림 봉 이력]
             s._liveBars = (s._liveBars || 0) + 1;
             s.lastAppliedBarEpoch = dateTimeToEpochApprox(String(sdate), stime);
             s.lastCheckedAt = sdate + " " + stime;
