@@ -1,12 +1,11 @@
 @echo off
 chcp 65001 >nul
-title YesSpot 대시보드 환경 자동 설치 v2
+title YesSpot 대시보드 환경 자동 설치 v3
 REM ================================================================================
-REM setup_python_env_v2.bat
+REM setup_python_env_v3.bat
 REM
 REM 역할: 새 컴퓨터에서 C:\dashboard 아래에 실행파일들만 복사하면 바로 돌아가도록 환경을 만든다.
-REM   1) C:\dashboard, C:\dashboard\data\sp500, nasdaq100, gold 폴더 생성
-REM      (스크립트가 로그를 쓰는 폴더 - 없으면 로그 저장이 안 될 수 있어 미리 만든다)
+REM   1) C:\dashboard 폴더 생성 (그 아래 data 폴더 등은 만들지 않음)
 REM   2) 파이썬 확인 - 없으면 winget으로 설치(설치 후 같은 창에서 이어서 진행)
 REM   3) websockets + tzdata 설치
 REM      (tzdata가 없으면 윈도우 파이썬은 시카고/서울 시간대를 몰라서 시간 변환이 틀어진다)
@@ -21,12 +20,8 @@ set "PYARG="
 
 echo [1/4] 폴더 생성 중...
 if not exist "C:\dashboard" mkdir "C:\dashboard"
-if not exist "C:\dashboard\data" mkdir "C:\dashboard\data"
-if not exist "C:\dashboard\data\sp500" mkdir "C:\dashboard\data\sp500"
-if not exist "C:\dashboard\data\nasdaq100" mkdir "C:\dashboard\data\nasdaq100"
-if not exist "C:\dashboard\data\gold" mkdir "C:\dashboard\data\gold"
-if not exist "C:\dashboard\data\gold" goto FOLDER_FAIL
-echo C:\dashboard\data\sp500, nasdaq100, gold 폴더 준비 완료.
+if not exist "C:\dashboard" goto FOLDER_FAIL
+echo C:\dashboard 폴더 준비 완료.
 echo.
 
 echo [2/4] 파이썬 확인 중...
@@ -70,7 +65,7 @@ echo.
 
 echo ================================================================
 echo 환경 준비가 끝났습니다.
-echo  - 폴더: C:\dashboard\data\sp500, nasdaq100, gold
+echo  - 폴더: C:\dashboard
 echo  - 파이썬 + websockets + tzdata
 echo.
 if exist "C:\dashboard\bridge_signals.py" (echo  - bridge_signals.py 확인됨) else (echo  - bridge_signals.py 는 아직 C:\dashboard 에 없습니다 - 실행파일들을 복사해주세요)
@@ -82,7 +77,7 @@ exit /b 0
 
 :FOLDER_FAIL
 echo.
-echo [오류] C:\dashboard\data 폴더를 만들지 못했습니다. 관리자 권한으로 다시 실행해주세요.
+echo [오류] C:\dashboard 폴더를 만들지 못했습니다. 관리자 권한으로 다시 실행해주세요.
 echo.
 pause
 exit /b 1
