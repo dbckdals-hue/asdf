@@ -1227,6 +1227,10 @@ var KO_DISPLAY_MAP = [
   ['RETRACTED_CONFIRMED(', '철회확인('],
   ['REGISTERED(', '신호등록('],
   ['PULLBACK_CONFIRMED(', '눌림확인('],
+  // [2026-10-02 추가][게이트 열림 봉 이력] 스크립트 v5.29가 게이트가 열리는 봉(분 25/틱 26봉째)의 시각·고가(H)·저가(L)를 이력에 남긴다. src=L 실시간 / src=W 워밍업.
+  ['GATE_OPEN(', '게이트열림('],
+  ['src=L', '출처=실시간'],
+  ['src=W', '출처=워밍업'],
   // [2026-08-27 추가] RESTORED_AFTER_RETRACTION은 기존 '철회복원' 기능 용어와
   // 통일해서 표기(다른 주석/툴팁에서 이미 쓰는 용어, 새 표현 만들지 않음).
   ['RESTORED_AFTER_RETRACTION(', '철회복원('],
