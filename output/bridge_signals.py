@@ -2447,7 +2447,9 @@ async def main():
         alert_thread = threading.Thread(target=start_alert_window, daemon=True)
         alert_thread.start()
 
-    async with websockets.serve(handler, "localhost", WS_PORT):
+    # [2026-10-03] 완전삭제처럼 오래 걸리는 동기 작업(큰 로그 파일 정리) 동안 이벤트 루프가 멈추면 websockets의 keepalive ping에 응답을 못 해
+    # "keepalive ping timeout"으로 대시보드 연결이 끊어졌다 - ping을 끄면(ping_interval=None) 작업이 길어져도 연결이 유지된다.
+    async with websockets.serve(handler, "localhost", WS_PORT, ping_interval=None, ping_timeout=None):
         print(f"브릿지 서버 시작됨: ws://localhost:{WS_PORT}")
         print("이 창을 끄지 말고 켜두세요. 종료하려면 Ctrl+C 를 누르세요.")
         await tail_loop()
