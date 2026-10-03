@@ -3359,7 +3359,7 @@ document.getElementById('btnPurge').onclick = function(){
     alert('삭제할 항목이 없습니다 (달성/무효/1주일 지난 신호 없음).');
     return;
   }
-  if (!confirm('달성/무효/1주일 지난 신호 ' + removedCount + '개를 완전히 삭제하시겠습니까?\n(원본 파일에서도 지워져서, 다시 접속해도 안 돌아옵니다)')) {
+  if (!confirm('달성/무효/1주일 지난 신호 ' + removedCount + '개를 완전히 삭제하시겠습니까?\n(원본 파일에서도 지워져서, 다시 접속해도 안 돌아옵니다)\n(진단로그도 같은 기준 - ' + PURGE_DAYS + '일 - 으로 같이 정리됩니다)')) {
     return;
   }
 
@@ -3407,7 +3407,7 @@ document.getElementById('btnPurgeKeepPending').onclick = function(){
     return;
   }
   if (!confirm('달성/무효로 끝난 신호 중 ' + PURGE_KEEP_PENDING_HOURS + '시간 지난 ' + removedCount +
-      '개를 완전히 삭제하시겠습니까?\n(감시중인 신호는 나이와 무관하게 전부 보존됩니다)\n' +
+      '개를 완전히 삭제하시겠습니까?\n(감시중인 신호는 나이와 무관하게 전부 보존됩니다)\n(진단로그도 같은 기준 - ' + PURGE_KEEP_PENDING_HOURS + '시간 - 으로 같이 정리됩니다)\n' +
       '(원본 파일에서도 지워져서, 다시 접속해도 안 돌아옵니다)')) {
     return;
   }
@@ -3949,11 +3949,11 @@ function connectWS(){
           return;
         }
         if (sig.cmd === 'purge_result') {
-          console.log('[완전삭제] 원본 파일 정리 완료 - 삭제:' + sig.removed + '개 / 유지:' + sig.kept + '개');
+          console.log('[완전삭제] 원본 파일 정리 완료 - 삭제:' + sig.removed + '개 / 유지:' + sig.kept + '개 (진단로그 삭제:' + (sig.diag_removed || 0) + '줄)');
           return;
         }
         if (sig.cmd === 'purge_keep_pending_result') {
-          console.log('[신호달성 완전삭제] 원본 파일 정리 완료 - 삭제:' + sig.removed + '개 / 유지:' + sig.kept + '개 (감시중 신호는 전부 보존됨)');
+          console.log('[신호달성 완전삭제] 원본 파일 정리 완료 - 삭제:' + sig.removed + '개 / 유지:' + sig.kept + '개 (감시중 신호는 전부 보존됨, 진단로그 삭제:' + (sig.diag_removed || 0) + '줄)');
           return;
         }
         if (sig.cmd === 'contracts_data') {

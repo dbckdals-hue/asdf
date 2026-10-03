@@ -1106,6 +1106,49 @@ def purge_file(path, days, keep_pending, hours=None):
     return {"removed": removed_count, "kept": len(kept_lines), "force_purged_pending": force_purged_pending}
 
 
+_DIAG_TS_RE = re.compile(r"^\d{8} \d{2}:\d{2}:\d{2}$")
+
+def purge_diag_file(path, cutoff_dt):
+    """[2026-10-03 신규][진단로그 같이 정리] 완전삭제/신호달성 완전삭제를 누를 때, 신호 로그와 같은 나이 기준으로
+    진단로그(<종목>_diagnostic_log_*.txt)의 오래된 줄도 같이 지웁니다.
+    - 각 줄은 "YYYYMMDD HH:MM:SS<TAB>[객체:N]<TAB>메시지" 형식이고, 맨 앞 시각(서버시간 CT)이 cutoff_dt("YYYYMMDD HH:MM:SS")보다 이전이면 삭제.
+    - 시각이 없거나 형식이 다른 줄은 지우지 않고 보존(이상한 줄 삭제 방지).
+    - 브릿지가 아직 못 읽은 뒷부분과, 덮어쓰기 직전에 늘어난 부분은 그대로 보존(purge_file과 같은 방식).
+    - 끝나면 읽은 위치를 새 파일 크기로 맞춰, 이미 보낸 진단줄이 대시보드로 다시 방송되지 않게 한다.
+    실행파일이 진단로그를 이어쓰는 중이면 purge_file과 같은 유실 가능성이 있으므로, 실행파일을 멈춘 상태에서 쓰는 것을 권장."""
+    if not os.path.exists(path):
+        return {"removed": 0, "kept": 0}
+    with open(path, "rb") as f:
+        raw = f.read()
+    already_pos = min(_get_pos(path), len(raw))
+    already_bytes = raw[:already_pos]
+    pending_bytes = raw[already_pos:]
+    text = already_bytes.decode("utf-8", errors="ignore")
+    kept, removed = [], 0
+    for ln in text.splitlines():
+        if not ln.strip():
+            continue
+        ts = ln.split("\t", 1)[0].strip()
+        if _DIAG_TS_RE.match(ts) and ts < cutoff_dt:
+            removed += 1
+        else:
+            kept.append(ln)
+    if removed == 0:
+        return {"removed": 0, "kept": len(kept)}  # 지울 게 없으면 파일을 건드리지 않음
+    new_already = ("\n".join(kept) + "\n").encode("utf-8") if kept else b""
+    extra_bytes = b""
+    try:
+        with open(path, "rb") as f:
+            f.seek(len(raw))
+            extra_bytes = f.read()
+    except Exception as e:
+        print(f"  ? [진단로그 정리 안전망] 추가분 재확인 실패(무시): {e}")
+    with open(path, "wb") as f:
+        f.write(new_already + pending_bytes + extra_bytes)
+    _set_pos(path, len(new_already))
+    return {"removed": removed, "kept": len(kept)}
+
+
 def purge_all(days, keep_pending, target=None, hours=None):
     """[2026-07-19 신규] discover_signal_files()로 찾은 파일들 중 target에
     해당하는 것만(target이 None이면 전체) purge_file()로 정리하고,
@@ -1132,13 +1175,30 @@ def purge_all(days, keep_pending, target=None, hours=None):
             "removed": result["removed"], "kept": result["kept"],
         })
 
+    # [2026-10-03 신규] 진단로그도 같은 나이 기준으로 같이 정리(신호 로그와 일관성). 기준 = hours가 있으면 hours시간, 없으면 days일.
+    diag_removed = 0
+    diag_kept = 0
+    try:
+        now_ct_d = datetime.now(_CT_ZONE).replace(tzinfo=None) if _CT_ZONE else datetime.now()
+        age_d = timedelta(hours=hours) if hours is not None else timedelta(days=days)
+        diag_cutoff = (now_ct_d - age_d).strftime("%Y%m%d %H:%M:%S")
+        for df in discover_diagnostic_files():
+            if target is not None and not (df["instrument"] == target[0] and df["filename"].endswith("_" + str(target[1]) + ".txt")):
+                continue
+            dres = purge_diag_file(df["path"], diag_cutoff)
+            diag_removed += dres["removed"]
+            diag_kept += dres["kept"]
+    except Exception as e:
+        print(f"  ? [진단로그 정리] 오류(무시, 신호 로그 정리에는 영향 없음): {e}")
     label = "신호달성 완전삭제" if keep_pending else "완전삭제"
+    print(f"[{label}] 진단로그 {diag_removed}줄 삭제, {diag_kept}줄 유지")
     print(f"[{label}] 완료 - 총 {total_removed}개 삭제, {total_kept}개 유지 "
           f"({len(files)}개 파일 대상: {[f['instrument']+'/'+f['contract'] for f in files]})")
     if all_force_purged_pending:
         print(f"  !! [추적유실 실제 근거 기록] 아직 미확정 상태였는데 나이 때문에 "
               f"강제 삭제된 신호 {len(all_force_purged_pending)}개 - purged_while_pending_evidence.log에 기록됨")
     return {"removed": total_removed, "kept": total_kept, "files": per_file,
+            "diag_removed": diag_removed, "diag_kept": diag_kept,
             "force_purged_pending": all_force_purged_pending}
 
 
