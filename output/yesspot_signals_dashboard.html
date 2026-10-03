@@ -763,6 +763,17 @@
     padding:10px 14px; border-radius:6px; margin-bottom:14px; font-size:13px;
   }
 </style>
+<style>
+/* [2026-10-03 신규][신호 숨기기] 화면에서만 감추는 기능 - 행 오른쪽 끝의 ✕ 버튼, 상단 "숨김 N개" 버튼, 숨긴 목록 패널 */
+.hideBtn{cursor:pointer;background:none;border:1px solid transparent;color:#768390;border-radius:5px;width:22px;height:22px;line-height:18px;padding:0;font-size:12px;opacity:.35}
+tbody tr:hover .hideBtn{opacity:1;color:#fff;background:#8b3a3a;border-color:#c25b5b}
+#btnHidden{border-color:#f0883e;color:#f0883e}
+#hiddenPanel{display:none;margin:6px 12px;background:var(--panel,#22272e);border:1px solid #f0883e;border-radius:8px;max-height:260px;overflow:auto}
+#hiddenPanel .hhead{display:flex;gap:10px;align-items:center;padding:8px 12px;border-bottom:1px solid #373e47;position:sticky;top:0;background:var(--panel,#22272e)}
+#hiddenPanel table{width:100%;border-collapse:collapse}
+#hiddenPanel th,#hiddenPanel td{padding:5px 10px;text-align:left;font-size:12px;white-space:nowrap}
+#hiddenPanel .rebtn{cursor:pointer;border:1px solid #57ab5a;color:#57ab5a;background:none;border-radius:6px;padding:2px 10px}
+</style>
 </head>
 <body>
 
@@ -819,6 +830,7 @@
     <option value="5">5일</option>
     <option value="6">6일</option>
   </select>
+  <button id="btnHidden" style="display:none" title="화면에서 숨긴 신호 보기/복원">🙈 숨김 0개 · 보기</button>
   <button id="btnPurge" title="감시중 목록 포함. 7일 이상 경과한 달성/무효 Data를 로그파일에서 영구 삭제. ">완전삭제</button>
   <button id="btnPurgeKeepPending" title="감시중 목록 제외. 24시간 이상 경과한 달성/무효 Data를 로그파일에서 영구 삭제. ">신호달성 완전삭제</button>
   <button id="btnNotify">🔔 알림 켜기</button>
@@ -832,6 +844,7 @@
        없어져 실질적으로 죽은 기능. -->
   <button id="btnShutdown">대시보드 종료</button>
 </div>
+<div id="hiddenPanel"></div>
 
 <div class="tablewrap" id="tablewrap">
   <table>
@@ -848,10 +861,11 @@
         <th data-key="price" title="달성/무효 판정의 실제 기준가(SB) - 이 가격에 도달하면 달성, 반대로 벗어나면 무효로 판정된다">가격</th>
         <th data-key="kst" title="목표삼각형(SA가 SB를 뚫은 삼각형)의 뾰족여부(한 지점이 확실히 튀어나왔는지/두 봉짜리 뭉툭한 고원인지) + 선행평탄구간(SB가 몇 봉째 안 바뀌었는지) + 그 봉에서 SA가 SB를 넘어선 높이(pt)">가격시간</th>
         <th data-key="reason">사유</th>
+        <th title="이 신호를 화면에서 숨깁니다(판정/알림/삭제 규칙은 그대로)"></th>
       </tr>
     </thead>
     <tbody id="tbody">
-      <tr><td colspan="11" class="empty">아직 수신된 신호가 없습니다. 브릿지 연결을 기다리는 중...</td></tr>
+      <tr><td colspan="12" class="empty">아직 수신된 신호가 없습니다. 브릿지 연결을 기다리는 중...</td></tr>
     </tbody>
   </table>
 </div>
@@ -2710,6 +2724,95 @@ function savePinnedKeys(){
 }
 var pinnedKeys = loadPinnedKeys();
 
+// ================================================================================
+// [2026-10-03 신규][신호 숨기기] "화면에서만" 감춘다 - allRows/판정/별표(일치 개수)/알림/삭제(완전삭제) 규칙은 전혀 건드리지 않는다.
+//  - 숨긴 신호가 달성/무효로 판정되면 다른 신호와 똑같은 규칙으로 처리되고(실시간이면 상태만 바뀌어 남고, 재접속 이력 재생이면 목록에서 빠짐),
+//    완전삭제 대상이 되면 똑같이 삭제된다. 목록에서 사라진(=allRows에 없는) 숨김 항목은 이력 로딩이 끝난 뒤 자동으로 정리된다.
+//  - 📌 고정된 신호는 숨길 수 없다(고정 해제 후 숨김).
+//  - 브라우저(localStorage)에 저장하고, 7일이 지나거나 500개를 넘으면 오래된 것부터 정리한다(예전 제외목록 기능을 메모리 문제로 뺐던 전례 때문에 상한을 둠).
+// ================================================================================
+var HIDDEN_STORAGE_KEY = 'yesspot_hiddenSignals_v1';
+var HIDDEN_MAX = 500;
+var HIDDEN_TTL_MS = 7 * 24 * 3600 * 1000;
+function pruneHiddenMap(o){
+  var now = Date.now();
+  Object.keys(o).forEach(function(k){ if (!o[k] || !o[k].t || (now - o[k].t) > HIDDEN_TTL_MS) delete o[k]; });
+  var keys = Object.keys(o);
+  if (keys.length > HIDDEN_MAX) {
+    keys.sort(function(a, b){ return o[a].t - o[b].t; });
+    keys.slice(0, keys.length - HIDDEN_MAX).forEach(function(k){ delete o[k]; });
+  }
+  return o;
+}
+function loadHiddenSignals(){
+  try {
+    var raw = localStorage.getItem(HIDDEN_STORAGE_KEY);
+    if (raw) return pruneHiddenMap(JSON.parse(raw) || {});
+  } catch (e) { console.error('[숨김] localStorage 복원 실패:', e); }
+  return {};
+}
+function saveHiddenSignals(){
+  try { localStorage.setItem(HIDDEN_STORAGE_KEY, JSON.stringify(hiddenSignals)); }
+  catch (e) { console.error('[숨김] localStorage 저장 실패:', e); }
+}
+var hiddenSignals = loadHiddenSignals();
+function hiddenCount(){ return Object.keys(hiddenSignals).length; }
+function hideSignalRow(key){
+  if (pinnedKeys.has(key)) return;
+  var r = null;
+  for (var i = 0; i < allRows.length; i++) { if (rowKey(allRows[i]) === key) { r = allRows[i]; break; } }
+  if (!r) return;
+  hiddenSignals[key] = { t: Date.now(), item: r.item, contract: r.contract, tf: r.tf, kind: r.kind, date: r.date, time: r.time, price: r.price.toFixed(2), kst: r.kst || '' };
+  pruneHiddenMap(hiddenSignals);
+  saveHiddenSignals();
+  render();
+}
+function unhideSignal(key){ delete hiddenSignals[key]; saveHiddenSignals(); render(); }
+function unhideAllSignals(){ hiddenSignals = {}; saveHiddenSignals(); render(); }
+function pruneHiddenAgainstRows(){
+  // 이력 로딩이 끝난 뒤에만: 이미 목록에서 사라진(판정되어 빠졌거나 삭제된) 신호의 숨김 항목은 자동 정리
+  if (!isLive || hiddenCount() === 0) return;
+  var present = {};
+  allRows.forEach(function(r){ present[rowKey(r)] = true; });
+  var changed = false;
+  Object.keys(hiddenSignals).forEach(function(k){ if (!present[k]) { delete hiddenSignals[k]; changed = true; } });
+  if (changed) saveHiddenSignals();
+}
+function escHtml(t){ return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+function renderHiddenPanel(){
+  var p = document.getElementById('hiddenPanel');
+  if (!p || p.style.display === 'none') return;
+  var keys = Object.keys(hiddenSignals).sort(function(a, b){ return hiddenSignals[b].t - hiddenSignals[a].t; });
+  var h = '<div class="hhead"><b>\uD83D\uDE48 숨긴 신호 ' + keys.length + '개</b><span style="color:#768390">7일이 지나거나 목록에서 사라지면 자동으로 빠집니다. 숨겨도 판정/알림/삭제 규칙은 그대로입니다.</span>'
+        + '<span style="margin-left:auto"></span><button id="btnUnhideAll" class="rebtn">모두 복원</button><button id="btnHiddenClose" class="rebtn" style="border-color:#768390;color:#cdd9e5">닫기</button></div>';
+  h += '<table><tr><th>종목</th><th>월물</th><th>타임</th><th>신호</th><th>서버시간</th><th>가격</th><th>숨긴 시각</th><th></th></tr>';
+  keys.forEach(function(k){
+    var e = hiddenSignals[k], d = new Date(e.t);
+    var when = (d.getMonth() + 1) + '/' + d.getDate() + ' ' + ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+    h += '<tr><td>' + escHtml(e.item) + '</td><td>' + escHtml(e.contract) + '</td><td>' + escHtml(e.tf) + '</td><td>' + escHtml(e.kind) + '</td><td>' + escHtml(e.date) + ' ' + escHtml(e.time)
+       + '</td><td>' + escHtml(e.price) + '</td><td style="color:#768390">' + when + '</td><td><button class="rebtn unhideOne" data-hidekey="' + escHtml(k) + '">복원</button></td></tr>';
+  });
+  h += '</table>';
+  p.innerHTML = h;
+  document.getElementById('btnUnhideAll').onclick = unhideAllSignals;
+  document.getElementById('btnHiddenClose').onclick = function(){ p.style.display = 'none'; };
+  p.querySelectorAll('.unhideOne').forEach(function(b){ b.onclick = function(){ unhideSignal(this.dataset.hidekey); }; });
+}
+function updateHiddenButton(){
+  var b = document.getElementById('btnHidden');
+  if (!b) return;
+  var n = hiddenCount();
+  b.style.display = n > 0 ? '' : 'none';
+  b.textContent = '\uD83D\uDE48 숨김 ' + n + '개 \u00b7 보기';
+  if (n === 0) { var p = document.getElementById('hiddenPanel'); if (p) p.style.display = 'none'; }
+  renderHiddenPanel();
+}
+document.getElementById('btnHidden').onclick = function(){
+  var p = document.getElementById('hiddenPanel');
+  p.style.display = (p.style.display === 'block') ? 'none' : 'block';
+  renderHiddenPanel();
+};
+
 // [2026-08-21 추가][묶어보기] 종목+가격+서버시각(초단위)까지 동일한 신호는
 // 항상 대표 1개(가장 이른 시각)만 보여주고 나머지는 접어둔다(상시적용).
 // 펼쳐진 그룹의 키 집합 - 별표 앞 화살표를 눌러서 토글.
@@ -2756,6 +2859,12 @@ function render(){
   // 는 증상으로 이어질 수 있다(실제 지적사항). try-catch로 감싸서 예외가
   // 나도 화면갱신은 반드시 계속되게 방어한다.
   try { updateConfirmStars(); } catch (e) { console.error('[updateConfirmStars 오류]', e); }
+  // [2026-10-03 신규][신호 숨기기] 별표(일치 개수) 계산이 끝난 "뒤에" 화면 표시용 rows에서만 숨긴 신호를 뺀다 - 숨겨도 다른 신호의 별표/판정/알림은 그대로.
+  try {
+    pruneHiddenAgainstRows();
+    if (hiddenCount() > 0) rows = rows.filter(function(r){ var k = rowKey(r); return !hiddenSignals[k] || pinnedKeys.has(k); });
+    updateHiddenButton();
+  } catch (eH) { console.error('[숨김 처리 오류]', eH); }
   // [근본수정][2026-09-26][메모리 누수] render()는 이미 매번 도는 자리라
   // 별도 타이머 없이 여기 얹는다 - 상한(CONCLUDED_ROWS_CAP) 밑이면 length
   // 비교 한 번으로 끝나 사실상 공짜, 넘었을 때만 실제 가지치기(정렬+제거)가
@@ -2785,7 +2894,7 @@ function render(){
 
   var tbody = document.getElementById('tbody');
   if (rows.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="11" class="empty">조건에 맞는 신호가 없습니다.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="12" class="empty">조건에 맞는 신호가 없습니다.</td></tr>';
     return;
   }
   var html = '';
@@ -3160,7 +3269,7 @@ function render(){
       // 고정돼있으면 체크박스에 파란 배경 클래스를 붙인다.
       var pinGroupCls = (!pinnedKeys.has(rk) && pinnedGroupKeys[groupKeyOf(r)]) ? ' pinChk-groupPinned' : '';
       html += '<tr' + rowCls + '><td><input type="checkbox" class="pinChk' + pinGroupCls + '" data-rowkey="' + rkEsc + '"' + pinChecked + '></td><td>' + achieveMark + '</td><td>' + starMark + '</td><td title="' + r.item + '">' + abbreviateItem(r.item) + '</td><td>' + r.contract + '</td><td>' + r.tf + '</td><td class="' + cls + '">' + r.kind +
-        '</td><td>' + r.datetime + '</td><td>' + r.price.toFixed(2) + '</td><td>' + fmtApexCell(r) + '</td><td style="max-width:280px; font-size:11px; color:#aaa;">' + reasonEsc + '</td></tr>';
+        '</td><td>' + r.datetime + '</td><td>' + r.price.toFixed(2) + '</td><td>' + fmtApexCell(r) + '</td><td style="max-width:280px; font-size:11px; color:#aaa;">' + reasonEsc + '</td><td>' + (pinnedKeys.has(rk) ? '' : '<button class="hideBtn" data-hidekey="' + rkEsc + '" title="이 신호를 화면에서 숨깁니다(판정/알림/삭제 규칙은 그대로)">\u2715</button>') + '</td></tr>';
     } catch(e) {
       // 이 행 하나에 문제가 있어도 나머지 행 표시에는 영향 없게 건너뜁니다.
       // (예: 가격감시 스크립트가 아직 불안정해서 이상한 값을 보내는 경우 대비)
@@ -3263,6 +3372,9 @@ function render(){
 
   // [2026-07-30 추가][상태이력 모달 열기] 화살표 버튼 클릭 시 저장해둔
   // window.__histData에서 해당 인덱스의 전체 이력 텍스트를 꺼내 모달에 표시.
+  document.querySelectorAll('.hideBtn').forEach(function(btn){
+    btn.onclick = function(ev){ ev.stopPropagation(); hideSignalRow(this.dataset.hidekey); };
+  });
   document.querySelectorAll('.histBtn').forEach(function(btn){
     btn.onclick = function(){
       var key = this.dataset.histkey;
