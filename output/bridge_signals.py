@@ -1108,11 +1108,46 @@ def purge_file(path, days, keep_pending, hours=None):
 
 _DIAG_TS_RE = re.compile(r"^\d{8} \d{2}:\d{2}:\d{2}$")
 
-def purge_diag_file(path, cutoff_dt):
+def collect_unresolved_label_floor(path):
+    """[2026-10-03 신규] 신호 로그 파일에서 "아직 달성/무효로 확정 안 된(감시중이거나 감시목록에서 빠진)" 신호들의 타임프레임 라벨별
+    가장 이른 신호 시각("YYYYMMDD HH:MM:SS")을 모아 돌려준다. 대시보드는 그런 신호의 상세창(감시목록에서 빠짐 사유)에
+    그 신호 시각 이후의 진단로그를 끌어다 보여주므로, 진단로그 정리 때 이 줄들은 지우면 안 된다.
+    판정 완료 여부는 purge_file과 같은 키(종목,라벨,날짜,시각,가격,신호종류)로 판단한다."""
+    floor = {}
+    if not os.path.exists(path):
+        return floor
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+            lines = [ln.strip() for ln in fh.read().splitlines() if ln.strip()]
+    except Exception:
+        return floor
+    resolved_keys, resolved_nokind = set(), set()
+    for ln in lines:
+        p = ln.split(",")
+        if len(p) >= 6 and p[2] in ("STATUS_ACHIEVED", "STATUS_INVALID"):
+            if len(p) >= 9 and p[8]:
+                resolved_keys.add((p[0], p[1], p[3], p[4], p[5], p[8]))
+            else:
+                resolved_nokind.add((p[0], p[1], p[3], p[4], p[5]))
+    for ln in lines:
+        p = ln.split(",")
+        if len(p) < 6 or p[2] not in _SIGNAL_KINDS:
+            continue
+        item, label, kind, date, time_, price = p[0], p[1], p[2], p[3], p[4], p[5]
+        if (item, label, date, time_, price, kind) in resolved_keys or (item, label, date, time_, price) in resolved_nokind:
+            continue
+        when = date + " " + time_
+        if _DIAG_TS_RE.match(when) and (label not in floor or when < floor[label]):
+            floor[label] = when
+    return floor
+
+def purge_diag_file(path, cutoff_dt, protect_floor=None):
     """[2026-10-03 신규][진단로그 같이 정리] 완전삭제/신호달성 완전삭제를 누를 때, 신호 로그와 같은 나이 기준으로
     진단로그(<종목>_diagnostic_log_*.txt)의 오래된 줄도 같이 지웁니다.
     - 각 줄은 "YYYYMMDD HH:MM:SS<TAB>[객체:N]<TAB>메시지" 형식이고, 맨 앞 시각(서버시간 CT)이 cutoff_dt("YYYYMMDD HH:MM:SS")보다 이전이면 삭제.
     - 시각이 없거나 형식이 다른 줄은 지우지 않고 보존(이상한 줄 삭제 방지).
+    - protect_floor({라벨: "YYYYMMDD HH:MM:SS"})가 있으면, 그 라벨이 줄에 들어있고 줄 시각이 그 신호 시각 이후인 줄은 오래돼도 보존
+      (아직 달성/무효 안 된 신호의 상세창이 쓰는 진단로그).
     - 브릿지가 아직 못 읽은 뒷부분과, 덮어쓰기 직전에 늘어난 부분은 그대로 보존(purge_file과 같은 방식).
     - 끝나면 읽은 위치를 새 파일 크기로 맞춰, 이미 보낸 진단줄이 대시보드로 다시 방송되지 않게 한다.
     실행파일이 진단로그를 이어쓰는 중이면 purge_file과 같은 유실 가능성이 있으므로, 실행파일을 멈춘 상태에서 쓰는 것을 권장."""
@@ -1130,6 +1165,9 @@ def purge_diag_file(path, cutoff_dt):
             continue
         ts = ln.split("\t", 1)[0].strip()
         if _DIAG_TS_RE.match(ts) and ts < cutoff_dt:
+            if protect_floor and any((lbl in ln) and ts >= fl for lbl, fl in protect_floor.items()):
+                kept.append(ln)
+                continue
             removed += 1
         else:
             kept.append(ln)
@@ -1182,10 +1220,16 @@ def purge_all(days, keep_pending, target=None, hours=None):
         now_ct_d = datetime.now(_CT_ZONE).replace(tzinfo=None) if _CT_ZONE else datetime.now()
         age_d = timedelta(hours=hours) if hours is not None else timedelta(days=days)
         diag_cutoff = (now_ct_d - age_d).strftime("%Y%m%d %H:%M:%S")
+        floors_by_inst = {}  # 종목 폴더 -> {라벨: 가장 이른 미확정 신호 시각} (그 종목의 모든 신호 로그 기준)
+        for sf in discover_signal_files():
+            fl_map = floors_by_inst.setdefault(sf["instrument"], {})
+            for lbl, when in collect_unresolved_label_floor(sf["path"]).items():
+                if lbl not in fl_map or when < fl_map[lbl]:
+                    fl_map[lbl] = when
         for df in discover_diagnostic_files():
             if target is not None and not (df["instrument"] == target[0] and df["filename"].endswith("_" + str(target[1]) + ".txt")):
                 continue
-            dres = purge_diag_file(df["path"], diag_cutoff)
+            dres = purge_diag_file(df["path"], diag_cutoff, floors_by_inst.get(df["instrument"]))
             diag_removed += dres["removed"]
             diag_kept += dres["kept"]
     except Exception as e:
