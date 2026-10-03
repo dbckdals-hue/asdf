@@ -471,7 +471,12 @@ async def handler(websocket):
                     days = data.get("days", 7)
                     target = _parse_target(data)
                     print(f"대시보드에서 완전삭제 요청을 받았습니다. (기준: {days}일, 대상: {target or '전체'})")
-                    result = purge_all(days, keep_pending=False, target=target)
+                    _purge_state["active"] = True
+                    try:
+                        result = await asyncio.get_running_loop().run_in_executor(
+                            None, lambda: purge_all(days, keep_pending=False, target=target))
+                    finally:
+                        _purge_state["active"] = False
                     await websocket.send(json.dumps({"cmd": "purge_result", **result}))
                     # [2026-07-27 추가][추적유실 실제 근거 기록] 이번 삭제로
                     # 아직 미확정이던 신호가 강제로 지워졌다면, 그 사실을
@@ -492,7 +497,12 @@ async def handler(websocket):
                         hours = None
                     target = _parse_target(data)
                     print(f"대시보드에서 '신호달성 완전삭제' 요청을 받았습니다. (기준: {str(hours) + '시간' if hours is not None else str(days) + '일'}, 감시중 제외, 대상: {target or '전체'})")
-                    result = purge_all(days, keep_pending=True, target=target, hours=hours)
+                    _purge_state["active"] = True
+                    try:
+                        result = await asyncio.get_running_loop().run_in_executor(
+                            None, lambda: purge_all(days, keep_pending=True, target=target, hours=hours))
+                    finally:
+                        _purge_state["active"] = False
                     await websocket.send(json.dumps({"cmd": "purge_keep_pending_result", **result}))
                 elif data.get("cmd") == "get_report":
                     # [2026-07-19 신규] 보고서 페이지(yesspot_report.html)가
@@ -782,6 +792,12 @@ def parse_line_with_source(line, instrument, contract):
 # 파일마다 따로 추적해야 해서 절대경로 -> {"pos": N} 딕셔너리로 바꿨습니다.
 # purge_file()에서도 이 값을 갱신해야 해서 모듈 전역에 둡니다.
 last_pos_state = {}  # path -> {"pos": N}
+
+# [2026-10-03 신규] 완전삭제(큰 로그 파일 정리)는 수십 초~수 분이 걸릴 수 있다. 예전엔 이 작업이 이벤트 루프를 통째로 막아서 그동안 websockets의
+# keepalive ping에 응답을 못 했고("keepalive ping timeout"), 삭제가 끝난 직후 대시보드 연결이 끊겼다. 이제 삭제는 별도 스레드에서 돌려
+# 이벤트 루프(ping 응답, 다른 메시지)는 계속 돌게 하고, 대신 삭제 중에는 tail_loop가 로그 파일을 읽지 않도록 이 플래그로 멈춘다
+# (삭제가 파일을 다시 쓰는 도중에 읽거나 읽은 위치를 갱신하면 안 되므로).
+_purge_state = {"active": False}
 
 def _get_pos(path):
     entry = last_pos_state.get(path)
@@ -1560,8 +1576,13 @@ async def tail_loop():
             pass
 
     while True:
+        # [2026-10-03] 완전삭제가 도는 동안은 로그 파일을 읽지 않고 기다린다(삭제가 끝나면 읽은 위치는 삭제 쪽이 이미 맞춰 둠).
+        while _purge_state["active"]:
+            await asyncio.sleep(0.2)
         try:
             for f in discover_signal_files():
+                if _purge_state["active"]:
+                    break  # 위에서 await로 방송하는 사이에 삭제가 시작됐을 수 있음 - 이번 주기는 여기서 멈추고 다음 주기에 이어서
                 path = f["path"]
                 instrument, contract = f["instrument"], f["contract"]
                 try:
@@ -1740,6 +1761,8 @@ async def tail_loop():
         _DIAG_ALERT_TAGS = ()
         try:
             for df in discover_diagnostic_files():
+                if _purge_state["active"]:
+                    break
                 dpath = df["path"]
                 try:
                     dsize = os.path.getsize(dpath)
@@ -2447,9 +2470,7 @@ async def main():
         alert_thread = threading.Thread(target=start_alert_window, daemon=True)
         alert_thread.start()
 
-    # [2026-10-03] 완전삭제처럼 오래 걸리는 동기 작업(큰 로그 파일 정리) 동안 이벤트 루프가 멈추면 websockets의 keepalive ping에 응답을 못 해
-    # "keepalive ping timeout"으로 대시보드 연결이 끊어졌다 - ping을 끄면(ping_interval=None) 작업이 길어져도 연결이 유지된다.
-    async with websockets.serve(handler, "localhost", WS_PORT, ping_interval=None, ping_timeout=None):
+    async with websockets.serve(handler, "localhost", WS_PORT):
         print(f"브릿지 서버 시작됨: ws://localhost:{WS_PORT}")
         print("이 창을 끄지 말고 켜두세요. 종료하려면 Ctrl+C 를 누르세요.")
         await tail_loop()

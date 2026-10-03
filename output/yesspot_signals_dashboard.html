@@ -1543,6 +1543,9 @@ var lastHeartbeatAt = null;
 var isStale = false; // 예스스팟 응답이 끊긴 것으로 판단된 상태
 var STALE_THRESHOLD_MS = 60000; // 60초
 var lastStaleAlertAt = null; // 마지막으로 "끊김" 알림을 보낸 시각 (반복 알림 간격 계산용)
+// [2026-10-03 신규] 완전삭제는 실행파일을 멈춘 상태에서 누르는 작업이라(큰 로그 정리에 수십 초~수 분), 그동안 예스스팟 신호가 없다는 이유로
+// 생존 감시(아래 setInterval)가 연결을 강제로 끊어 버리면 삭제 결과를 못 받는다. 삭제를 요청한 시각부터 이 시각까지는 생존 감시의 강제 끊기/알림을 건너뛴다.
+var purgeInProgressUntil = 0;
 
 // ---------- 렌더링 배치 처리 ----------
 // 신호가 짧은 시간에 여러 개 몰려서 들어올 때, 매번 표 전체를 다시
@@ -3370,6 +3373,7 @@ document.getElementById('btnPurge').onclick = function(){
 
   // 2) 브릿지에게도 원본 파일 정리를 요청
   if (ws && ws.readyState === 1) {
+    purgeInProgressUntil = Date.now() + 15 * 60 * 1000; // 최대 15분까지 생존 감시 보류(결과를 받거나 연결이 끊기면 해제)
     ws.send(JSON.stringify({ cmd: 'purge', days: PURGE_DAYS }));
   } else {
     alert('브릿지와 연결이 안 되어있어 원본 파일은 못 지웠습니다.\n화면에서만 지워진 상태이니, 연결 복구 후 다시 눌러주세요.');
@@ -3418,6 +3422,7 @@ document.getElementById('btnPurgeKeepPending').onclick = function(){
   render();
 
   if (ws && ws.readyState === 1) {
+    purgeInProgressUntil = Date.now() + 15 * 60 * 1000; // 최대 15분까지 생존 감시 보류(결과를 받거나 연결이 끊기면 해제)
     ws.send(JSON.stringify({ cmd: 'purge_keep_pending', days: PURGE_KEEP_PENDING_DAYS, hours: PURGE_KEEP_PENDING_HOURS }));
   } else {
     alert('브릿지와 연결이 안 되어있어 원본 파일은 못 지웠습니다.\n화면에서만 지워진 상태이니, 연결 복구 후 다시 눌러주세요.');
@@ -3920,6 +3925,7 @@ function connectWS(){
       ws.send(JSON.stringify({ cmd: 'get_contracts' }));
     };
     ws.onclose = function(){
+      purgeInProgressUntil = 0; // 연결이 끊기면 삭제 중 보류 해제
       statusEl.textContent = '연결끊김'; statusEl.className = 'pill off';
       document.getElementById('connBanner').style.display = 'block';
       setTimeout(connectWS, 3000);
@@ -3951,10 +3957,12 @@ function connectWS(){
           return;
         }
         if (sig.cmd === 'purge_result') {
+          purgeInProgressUntil = 0;
           console.log('[완전삭제] 원본 파일 정리 완료 - 삭제:' + sig.removed + '개 / 유지:' + sig.kept + '개 (진단로그 삭제:' + (sig.diag_removed || 0) + '줄)');
           return;
         }
         if (sig.cmd === 'purge_keep_pending_result') {
+          purgeInProgressUntil = 0;
           try { alert('신호달성 완전삭제 완료\n- 신호 로그 삭제: ' + sig.removed + '줄 (유지 ' + sig.kept + '줄)\n- 하트비트 슬림화: ' + (sig.trimmed || 0) + '줄\n- 진단로그 삭제: ' + (sig.diag_removed || 0) + '줄 (유지 ' + (sig.diag_kept || 0) + '줄)'); } catch (eA) {}
           console.log('[신호달성 완전삭제] 원본 파일 정리 완료 - 삭제:' + sig.removed + '개 / 유지:' + sig.kept + '개 (감시중 신호는 전부 보존됨, 진단로그 삭제:' + (sig.diag_removed || 0) + '줄)');
           return;
@@ -4152,6 +4160,7 @@ setInterval(function(){
   // 동안(즉 재연결 후 이력을 한창 받는 중)에는 stale 판정 자체를
   // 건너뛰어서, 이력전송이 다 끝난 뒤부터만 정상적으로 끊김을 감지하게 한다.
   if (!isLive) return;
+  if (Date.now() < purgeInProgressUntil) return; // 완전삭제 진행 중에는 예스스팟 무응답 판정/강제 끊기를 하지 않음
   var elapsed = Date.now() - lastHeartbeatAt;
   if (elapsed > STALE_THRESHOLD_MS) {
     if (!isStale) {
