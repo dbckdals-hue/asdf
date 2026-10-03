@@ -904,6 +904,21 @@ def log_forced_pending_purge(signal_path, item, label, kind, date, time_, price,
         print(f"  ? [추적유실 증거기록] 실패(무시): {e}")
         return None
 
+def _trim_heartbeat_line(ln, unresolved_pks):
+    """[2026-10-03 신규][하트비트 줄 슬림화] 하트비트 줄은 "종목,HEARTBEAT_TICK|MIN,HEARTBEAT,날짜,시각,0,감시키목록,감시상세" 형식인데, 감시 중이던 모든 신호의
+    이력이 매번 통째로 실려 한 줄이 수십 KB가 된다. 24시간이 지난 줄에서는 아직 미판정인 신호(unresolved_pks)의 항목만 남기고 나머지(이미 판정된
+    신호의 항목)는 뺀다. 앞쪽 필드(시각 등)는 그대로라 "그 시각에 하트비트가 왔다"는 사실과 미판정 신호의 상태/이력은 보존된다.
+    반환: (새 줄, 남은 항목 수). 형식이 이상하면 원래 줄을 그대로 돌려준다."""
+    p = ln.split(",", 7)
+    if len(p) < 7:
+        return ln, -1
+    keys = [k for k in p[6].split(";") if k]
+    details = p[7] if len(p) >= 8 else ""
+    new_keys = [k for k in keys if k in unresolved_pks]
+    new_details = [d for d in details.split(";") if d and d.split("^", 1)[0] in unresolved_pks]
+    new_p = p[:6] + [";".join(new_keys), ";".join(new_details)]
+    return ",".join(new_p), len(new_keys)
+
 def purge_file(path, days, keep_pending, hours=None):
     """[2026-07-19 재작성] 파일 하나를 대상으로 완전삭제를 수행합니다.
     이전에는 purge_signal_file()/purge_resolved_old_keep_pending() 두
@@ -967,6 +982,14 @@ def purge_file(path, days, keep_pending, hours=None):
     archive = _load_archive(path)  # [2026-07-19 신규] 지워지기 전에 누적할 통계 아카이브
     archive_changed = False
 
+    # [2026-10-03 신규] 아직 달성/무효로 확정 안 된 신호의 키 목록(하트비트 슬림화용) - resolved 판정은 아래 루프와 같은 기준
+    unresolved_pks = set()
+    for ln0 in lines:
+        p0 = ln0.split(",")
+        if len(p0) >= 6 and p0[2] in _SIGNAL_KINDS:
+            if not (((p0[0], p0[1], p0[3], p0[4], p0[5], p0[2]) in resolved_keys) or ((p0[0], p0[1], p0[3], p0[4], p0[5]) in resolved_nokind)):
+                unresolved_pks.add(p0[1] + "|" + p0[2] + "|" + p0[3] + "|" + p0[4] + "|" + p0[5])
+    trimmed_count = 0
     kept_lines = []
     removed_count = 0
     force_purged_pending = []  # [2026-07-27 추가] 이번 호출에서 "미확정인데 강제 삭제"된 신호 목록
@@ -985,6 +1008,18 @@ def purge_file(path, days, keep_pending, hours=None):
             # 처럼 대응되는 STATUS_* 줄이 영영 없는 경우 keep_pending=True에서
             # "영원히 미확정 pending"으로 오인돼 무한 보존되는 등 의미가
             # 왜곡될 수 있어 완전히 분리한다.
+            if kind == "HEARTBEAT" and keep_pending and cutoff_dt is not None \
+                    and len(date) == 8 and date.isdigit() and len(time_) == 8 and time_[2] == ":" and time_[5] == ":" \
+                    and (date + " " + time_) < cutoff_dt:
+                # [신호달성 완전삭제 전용] 24시간 넘은 하트비트: 미판정 신호의 항목만 남기고 슬림화. 남은 항목이 없고 7일도 넘었으면 줄 자체를 삭제.
+                new_ln, left = _trim_heartbeat_line(ln, unresolved_pks)
+                if left == 0 and date < cutoff:
+                    removed_count += 1
+                else:
+                    if new_ln != ln:
+                        trimmed_count += 1
+                    kept_lines.append(new_ln)
+                continue
             if date < cutoff:
                 removed_count += 1
             else:
@@ -1103,10 +1138,11 @@ def purge_file(path, days, keep_pending, hours=None):
         f.write(new_content)
 
     _set_pos(path, len(new_already))
-    return {"removed": removed_count, "kept": len(kept_lines), "force_purged_pending": force_purged_pending}
+    return {"removed": removed_count, "kept": len(kept_lines), "trimmed": trimmed_count, "force_purged_pending": force_purged_pending}
 
 
 _DIAG_TS_RE = re.compile(r"^\d{8} \d{2}:\d{2}:\d{2}$")
+DIAG_NO_TS_KEEP_LAST = 3000  # 시각 없는 진단줄은 이 개수만큼 최근 줄만 남김
 
 def collect_unresolved_label_floor(path):
     """[2026-10-03 신규] 신호 로그 파일에서 "아직 달성/무효로 확정 안 된(감시중이거나 감시목록에서 빠진)" 신호들의 타임프레임 라벨별
@@ -1145,7 +1181,7 @@ def purge_diag_file(path, cutoff_dt, protect_floor=None):
     """[2026-10-03 신규][진단로그 같이 정리] 완전삭제/신호달성 완전삭제를 누를 때, 신호 로그와 같은 나이 기준으로
     진단로그(<종목>_diagnostic_log_*.txt)의 오래된 줄도 같이 지웁니다.
     - 각 줄은 "YYYYMMDD HH:MM:SS<TAB>[객체:N]<TAB>메시지" 형식이고, 맨 앞 시각(서버시간 CT)이 cutoff_dt("YYYYMMDD HH:MM:SS")보다 이전이면 삭제.
-    - 시각이 없거나 형식이 다른 줄은 지우지 않고 보존(이상한 줄 삭제 방지).
+    - 시각이 없는 줄은 나이를 모르므로 가장 최근 DIAG_NO_TS_KEEP_LAST(3000)줄만 남기고 지움(미판정 신호 라벨이 들어있는 줄은 보존).
     - protect_floor({라벨: "YYYYMMDD HH:MM:SS"})가 있으면, 그 라벨이 줄에 들어있고 줄 시각이 그 신호 시각 이후인 줄은 오래돼도 보존
       (아직 달성/무효 안 된 신호의 상세창이 쓰는 진단로그).
     - 브릿지가 아직 못 읽은 뒷부분과, 덮어쓰기 직전에 늘어난 부분은 그대로 보존(purge_file과 같은 방식).
@@ -1160,11 +1196,21 @@ def purge_diag_file(path, cutoff_dt, protect_floor=None):
     pending_bytes = raw[already_pos:]
     text = already_bytes.decode("utf-8", errors="ignore")
     kept, removed = [], 0
-    for ln in text.splitlines():
-        if not ln.strip():
-            continue
+    all_lines = [ln for ln in text.splitlines() if ln.strip()]
+    # 시각이 없는 줄(맨 앞 시각 칸이 비어 있는 일상 진단줄)은 나이를 알 수 없으므로, 가장 최근 DIAG_NO_TS_KEEP_LAST줄만 남기고 지운다.
+    # 단, 미판정 신호의 라벨이 들어있는 줄은 오래돼도 보존한다.
+    nots_idx = [i for i, ln in enumerate(all_lines) if not _DIAG_TS_RE.match(ln.split("\t", 1)[0].strip())]
+    nots_keep_from = nots_idx[-DIAG_NO_TS_KEEP_LAST] if len(nots_idx) > DIAG_NO_TS_KEEP_LAST else -1
+    nots_set = set(nots_idx)
+    for i, ln in enumerate(all_lines):
         ts = ln.split("\t", 1)[0].strip()
-        if _DIAG_TS_RE.match(ts) and ts < cutoff_dt:
+        if i in nots_set:
+            if i >= nots_keep_from or (protect_floor and any(lbl in ln for lbl in protect_floor)):
+                kept.append(ln)
+            else:
+                removed += 1
+            continue
+        if ts < cutoff_dt:
             if protect_floor and any((lbl in ln) and ts >= fl for lbl, fl in protect_floor.items()):
                 kept.append(ln)
                 continue
@@ -1198,12 +1244,14 @@ def purge_all(days, keep_pending, target=None, hours=None):
 
     total_removed = 0
     total_kept = 0
+    total_trimmed = 0
     per_file = []
     all_force_purged_pending = []  # [2026-07-27 추가] 전체 파일 합산
     for f in files:
         result = purge_file(f["path"], days, keep_pending, hours)
         total_removed += result["removed"]
         total_kept += result["kept"]
+        total_trimmed += result.get("trimmed", 0)
         for evt in result.get("force_purged_pending", []):
             evt["instrument"] = f["instrument"]
             evt["contract"] = f["contract"]
@@ -1235,6 +1283,7 @@ def purge_all(days, keep_pending, target=None, hours=None):
     except Exception as e:
         print(f"  ? [진단로그 정리] 오류(무시, 신호 로그 정리에는 영향 없음): {e}")
     label = "신호달성 완전삭제" if keep_pending else "완전삭제"
+    print(f"[{label}] 하트비트 슬림화 {total_trimmed}줄(24시간 넘은 줄에서 미판정 신호 외 항목 제거)")
     print(f"[{label}] 진단로그 {diag_removed}줄 삭제, {diag_kept}줄 유지")
     print(f"[{label}] 완료 - 총 {total_removed}개 삭제, {total_kept}개 유지 "
           f"({len(files)}개 파일 대상: {[f['instrument']+'/'+f['contract'] for f in files]})")
@@ -1242,7 +1291,7 @@ def purge_all(days, keep_pending, target=None, hours=None):
         print(f"  !! [추적유실 실제 근거 기록] 아직 미확정 상태였는데 나이 때문에 "
               f"강제 삭제된 신호 {len(all_force_purged_pending)}개 - purged_while_pending_evidence.log에 기록됨")
     return {"removed": total_removed, "kept": total_kept, "files": per_file,
-            "diag_removed": diag_removed, "diag_kept": diag_kept,
+            "diag_removed": diag_removed, "diag_kept": diag_kept, "trimmed": total_trimmed,
             "force_purged_pending": all_force_purged_pending}
 
 
