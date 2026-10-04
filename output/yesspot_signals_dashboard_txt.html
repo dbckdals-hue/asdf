@@ -2292,7 +2292,7 @@ function updateItemFilterOptions(){
 // (나스닥100->N, SP500->S, GOLD->G). 목록에 없는 새 종목이 추가돼도
 // 깨지지 않도록, 매핑에 없으면 원래 이름의 첫 글자로 자동 대체한다
 // (특정 종목명을 코드 곳곳에 하드코딩하지 않는 기존 설계 원칙 유지).
-var ITEM_ABBR_MAP = { 'NASDAQ100': 'N', 'SP500': 'S', 'GOLD': 'G' };
+var ITEM_ABBR_MAP = { 'NASDAQ100': 'N', 'SP500': 'S', 'GOLD': 'G', 'CRUDEOIL': 'C' };
 function abbreviateItem(name){
   if (!name) return name;
   if (ITEM_ABBR_MAP[name]) return ITEM_ABBR_MAP[name];

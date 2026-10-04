@@ -2402,7 +2402,7 @@ def start_alert_window():
                 # [신규][2026-09-23][사용자 요청] 종목칸을 넓게 차지하던 전체
                 # 이름(NASDAQ100/SP500/GOLD) 대신 한 글자(N/S/G)만 표시 -
                 # 목록에 없는 새 종목이 추가돼도 안 깨지게, 없으면 앞글자로 폴백.
-                _item_abbr_map = {"NASDAQ100": "N", "SP500": "S", "GOLD": "G"}
+                _item_abbr_map = {"NASDAQ100": "N", "SP500": "S", "GOLD": "G", "CRUDEOIL": "C"}
                 _item_full = item.get("item", "")
                 _item_abbr = _item_abbr_map.get(_item_full, _item_full[:1] if _item_full else "")
                 iid = tree.insert("", 0, values=(
