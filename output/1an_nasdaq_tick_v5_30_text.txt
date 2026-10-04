@@ -1432,7 +1432,7 @@ var excelDirtyShards = {};
 
 // [v5.30_텍스트] 엑셀 저장 없음 - 아래 함수들은 호출 자리를 그대로 두기 위한 무동작 자리다(감시목록은 메모리에만 둔다).
 function excelTrackSignal(sig) { }
-function excelUntrackSignal(sig) { pendingStateDirty = true; scheduleQuickSave(); } // SAVE_CONFIRMED 마커 타이밍은 기존과 동일하게 유지
+function excelUntrackSignal(sig) { }
 function excelMarkDirty(sig) { }
 function auditPendingReassignment(beforeArr, afterArr, explainedPks, siteName) {
     try {
@@ -2130,24 +2130,8 @@ function recordFailureForRetry(target) {
 }
 
 var QUICK_SAVE_DEBOUNCE_MS = 2000, quickSaveScheduled = false;
-function scheduleQuickSave() { if (quickSaveScheduled) return; quickSaveScheduled = true; Main.SetTimer(3, QUICK_SAVE_DEBOUNCE_MS); }
-function savePendingState() {
-    try {
-        var nowStr = nowServerTimeStr();
-        pendingSignals.forEach(function (s) {
-            if (s._saveConfirmed === false) {
-                pushStateHistory(s, nowStr, "SAVE_CONFIRMED", s.price);
-                s._saveConfirmed = true;
-                // [근본수정][2026-09-29] SAVE_SCHEDULED와 동일한 8번째 필드
-                // (진짜 kind) 누락 - 위 설명 참고. s.kind가 이 신호의 진짜
-                // kind(예: BEAR1)이므로 그대로 실어보낸다.
-                try { timedPrintOnFile(OUTPUT_FILE, s.itemName + "," + s.tf + ",SAVE_CONFIRMED," + s.sdate + "," + s.stime + "," + Number(s.price).toFixed(2) + "," + nowStr + "," + s.kind + "\n"); } catch (e) {}
-                excelMarkDirty(s);
-            }
-        });
-        flushExcelDirtyShards();
-    } catch (e) {}
-}
+function scheduleQuickSave() { } // [v5.30_텍스트] 저장 없음 -> 저장 타이머 안 씀
+function savePendingState() { } // [v5.30_텍스트] 저장 없음 -> SAVE_CONFIRMED(저장확인) 마커를 내보내지 않는다(거짓 표시 방지)
 function loadPendingState() {
     if (RESET_PENDING_STATE_ON_START) {
         // [제거][사용자 요청][검증완료] wipedForRestoreCandidates 삭제됨 -
