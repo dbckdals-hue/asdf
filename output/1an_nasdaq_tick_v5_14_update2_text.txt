@@ -1,0 +1,2727 @@
+// ================================================================================
+// [파일] NASDAQ100(NQZ26) 틱봉(1안, 5틱단위) | v5.14_업데이트2_텍스트(수정시 버전+이력 필수 갱신)
+// [2026-10-04][텍스트버전] 엑셀 저장/복원을 전부 뺀 버전(엑셀 참조 코드 없음). 데이터 폴더 C:\dashboard_txt\data. 감시목록은 메모리에만 있고, 재시작하면 첫 워밍업(최대 봉수)이 차트 구간에서 신호를 다시 찾아 재구성한다. 재조회 창보다 오래된 미판정 신호/쌓인 이력은 재시작 시 이어지지 않는다.
+// [2026-10-02][v5.14_업데이트2] 업데이트 버전 + 실시간 빌더 이어받기(5.23)만 뺀 나머지 전부 포함: 실시간 봉 시각 차트 기준 통일(5.23), Excel 저장 표시 최소화·분봉 WARM 저장 표시·샤드 30000자 경고(5.15), 분봉 Excel 원복·epoch 변환 캐시(5.18) 포함.
+//   이어받기(링버퍼/빌더·계산기 복사/LIVE_SEED_ENABLED)는 코드째 제거 - 워밍업 때 실시간 빌더는 빈 상태로 다시 시작(v5.22 방식). 카운터 불일치 알림/로그는 없음(카운터 교정은 유지).
+// [2026-10-02][v5.29] 게이트 열림 봉 이력 추가: 게이트가 열리는 봉(분 25봉/틱 26봉)의 시각·고가·저가를 신호 이력에 GATE_OPEN으로 1회(실시간 src=REAL, 워밍업 src=WARM) 기록. 판정/게이트 로직은 변경 없음. 대시보드(이력 모달 '게이트열림')와 세트.
+// [2026-10-01][v5.28] 다이아몬드 수정: 흰색=왼쪽 평탄 3봉 이상+왼쪽 8봉 중 6봉 구름(두께 제외)+오른쪽 평탄 3봉(신호봉 포함) 동안 SB 불변·구름 유지, 신호 뒤 2봉째 등록(기존 8봉째). 보라=그대로(오른쪽 평탄 1봉은 기본신호가 이미 확인). 소스에 [왼쪽평탄구간]/[오른쪽평탄구간]/[삼각형]/[왼쪽구름층]/[오른쪽구름층]/[등록시점] 주석 표시.
+// [2026-10-01][v5.27] 흰색 다이아몬드 조건 추가: 앞쪽 평탄구간 3봉 이상(DIAMOND_WHITE_MIN_FLAT_RUN). 보라(2봉 이상)는 그대로.
+// [2026-10-01][v5.26 - 최종 정리] 확인용 진단/알림 제거(카운터 불일치 GATE_COUNT_SYNC 줄·알림, 이어받기 진단파일·결과 알림). 기능은 유지: 실시간 빌더 이어받기(v5.23), 카운터 차트 기준 교정, 저품질이관 묶음 알림(v5.22), 다이아몬드 신기준(v5.21), 타임아웃 재시도(v5.19). 이어받기를 끄려면 LIVE_SEED_ENABLED=false.
+// [2026-09-30][v5.17 - 차트봉 카운트를 단일 기준값으로 통일] 사용자 실측: 알림의 차트 카운트(1160/327/1263)가 실제 차트(1162/330/1280)와 0.2~1.3% 내로 일치,
+//   실시간이 센 값(82/277/1060)은 크게 어긋남 -> 차트 완결봉 수(마지막 봉/filled 제외)를 모든 기능의 기준값으로 사용.
+//   (1)워밍업 재판정이 창이 신호를 덮을 때 영속 카운터를 차트 기준 봉수로 직접 기록 - 26봉 게이트/판정사유(gate=N/26)/게이트 신뢰성 검사가 같은 값을 봄
+//      (예전엔 판정사유에 "gate=13/26"처럼 커서 방식 값이 찍혀 달성인데 26 미만으로 보였음).
+//   (2)워밍업 재판정/분봉 즉시판정은 완결봉만 사용(마지막 봉은 형성중일 수 있어 실시간 틱이 담당).
+//   (3)재조회 창이 가장 오래된 감시신호를 못 덮으면 다음 요청을 최대 크기로 받음(수신속도 추정 오차로 동기화가 건너뛰어지던 구멍).
+//   (4)진단: 재시작 후 첫 동기화는 진단로그(GATE_COUNT_SYNC_INIT)에만 남기고, 같은 실행의 이후 동기화에서 2 이상 어긋나면 GATE_COUNT_SYNC(알림).
+// [2026-09-30][v5.16 - 게이트 카운터 차트기준 재동기화 + 불일치 원인 진단] 판정/신호검색 로직은 변경 없음(수정 전후 회귀테스트 동일).
+//   (1)워밍업이 감시신호의 봉 카운터를 "신호 이후 차트 완결봉 수(마지막 봉 제외)"로 다시 맞춤 - 예전엔 올리기만 했고(분봉은 아예 없음),
+//      워밍업이 형성봉을 매번 더해 카운터가 부풀거나 실시간이 적게 세도 그대로 남아 게이트가 일찍/늦게 열렸음.
+//   (2)재동기화 직전 카운터(실시간 값)와 차트값이 2 이상 다르면 GATE_COUNT_SYNC 줄(신호파일+진단로그)에 원인 판별용 수치를 기록:
+//      실시간이 센 봉수/같은 구간 차트 봉수/워밍업 가산/실시간 빌더 재시작 횟수와 버려진 틱수/수신틱 대비 차트틱(틱봉)/무틱공백 정지(분봉).
+//      브릿지가 알림창용 한글 문구를 만들고 대시보드가 저품질이관처럼 한 줄로 표시한다.
+// [2026-09-29][v5.15 - 부하/파일폭증 정리 + 테스트 검증된 수정만 반영] 판정/신호검색 로직은 변경 없음(수정 전후 회귀테스트 동일).
+//   (1)PRETTY2_CONFIRMED 중복기록 방지(pretty2Written) - 워밍업 재생이 매 순환마다 같은 줄을 다시 쓰던 것 제거.
+//   (2)게이트 닫힘 구간의 눌림<->대기 왕복 이력 기록 제거(눌림확인은 신호당 첫 1회만, sig._pullbackLogged) - 상태값(sig.state)/판정은 그대로.
+//   (3)Excel 저장 표시(excelMarkDirty)를 실제 상태/이력/카운터가 바뀐 신호만 표시 + 샤드 JSON 30000자 초과 경고. 저장 시점(등록/제거 2초, 하트비트 30초)은 그대로.
+//   (4)틱봉 봉캐시(barHistoryCache) 전체 제거 - 저장/복원/갱신만 하고 어디서도 읽지 않던 죽은 기능(분봉은 v4.1에서 이미 제거).
+// [2026-09-29][v5.13 - 진짜 근본원인 수정, 사용자 실측지적("#주기로 등록된
+//   신호만 모달에 신호등록만 있고 저장예약/눌림확인/저장확인이 없다")]
+//   v5.12에서 고친 SAVE_SCHEDULED 8번째 필드 누락은 실재하는 버그였지만
+//   "왜 #주기 신호만" 증상을 설명 못 했음(사용자가 직접 비교 스크린샷으로
+//   반박) - 재검증 결과 진짜 원인은 FRAME_SHIFT_SUSPECT 문구 안의
+//   "disp=X;actual=Y" 세미콜론이 HEARTBEAT pendingDetails에서 서로 다른
+//   신호를 구분하는 구분자(";")와 똑같아서, 대시보드가 이 신호 하나의
+//   전체이력 문자열을 그 세미콜론에서 통째로 잘라버리고 있었음(Node.js로
+//   실제 buildPendingDetailsString/대시보드 파싱 로직을 그대로 복사해
+//   재현 - 정상신호는 2개 키로 온전히 파싱되는데 #주기 신호는 이력이
+//   중간에 잘려 엉뚱한 가짜 키로 떨어져나가는 것까지 확인). 구분자를
+//   ",", ";", "^", "|", "->" 무엇과도 안 겹치는 "_"로 교체(대시보드
+//   v5.13과 세트, 구버전 ";" 로그도 계속 표시되게 대시보드는 둘 다 허용).
+// [2026-09-29][v5.12 - 근본수정 - 저장예약/저장확인이 모달에 영원히 안
+//   보이던 버그, 사용자 실측지적("신호등록만 있고 저장예약/저장확인도
+//   없다, 이건 기본이다")] SAVE_SCHEDULED/SAVE_CONFIRMED 신호파일 줄이
+//   대시보드가 조회키에 쓰는 8번째 필드(진짜 신호종류, 예: BEAR1)를 한
+//   번도 실어보낸 적이 없었음 - 대시보드는 그 필드가 없으면 이벤트 자기
+//   이름("SAVE_SCHEDULED")으로 잘못 폴백해서 조회키가 실제 신호와 영원히
+//   안 맞았다(#주기/프레임밀림과 무관 - 전체 신호 공통 결함, 2026-09-01에
+//   대시보드/브릿지 쪽만 이 필드를 기대하도록 고쳐졌는데 정작 스크립트
+//   쪽에서 그 필드를 보내는 수정이 누락돼있었던 것으로 확인됨). 두 군데
+//   모두 8번째 필드로 진짜 kind를 추가.
+// [2026-09-29][v5.11 - 사용자 요청] RESET_PENDING_STATE_ON_START을 true로
+//   잠깐 켰다가(v5.9) 다시 false로 복귀 - 재시작해도 기존 감시목록이
+//   유지된다.
+// [2026-09-29][v5.10 - 재조회 순환 "침묵 완료처리" 사각지대 근본수정]
+//   사용자가 실제 운영중(분봉 파일에서) [진행상황] 90/110 -> [순환완료]
+//   (실제수신 104 + 저품질 0 = 104) 로그를 캡처해서 "110개 중 6개는 어디로
+//   갔냐"고 지적 - 추적 결과 Main_OnRcvChartEx가 예외 없이 성공했지만
+//   받은 봉이 0개인 경우(bars.length===0)에도 completedCycles=true를
+//   무조건 찍어버려서, 재시도큐(retryQueue)에도 안 들어가고 저품질
+//   (degradedPeriods) 전환 문턱(MAX_RETRY_ATTEMPTS 5회)에도 도달할 기회
+//   자체가 없이 조용히 "완료"로 사라지는 사각지대였음(분봉/틱봉 6개 파일
+//   전부 동일 패턴, 실사례: 분봉 M0001~M0007이 실제수신/저품질 어느
+//   쪽에도 안 잡힘). 사용자 확인 방향대로 수정: 봉을 0개 받으면 예외와
+//   동일하게 "실패"로 보고 recordFailureForRetry로 보낸다 - 그 함수의
+//   기존 재시도횟수 카운팅/저품질 전환 로직을 그대로 재사용하므로 새
+//   분기를 만들지 않았고, 이제 [순환완료] 로그의 "실제수신+저품질" 합계가
+//   항상 총 타임프레임 수(110)와 정확히 맞아떨어진다.
+// [2026-09-29][v5.9 - 게이트 신뢰성 안전장치 신규] 사용자가 실제 운영중
+//   나스닥100 틱봉에서 T0840/BULL1(20260923 04:35:37) 신호가 등록 후 실제
+//   약 35분(체감 3~4개 표시봉)만에 "gate=1036/26봉"으로 달성 확정된 사례를
+//   발견 - 원인 후보(카운팅/판정 커서 분리 문제, 예외로 인한 판정지연,
+//   봉값 다수결 격리)를 하나씩 진단로그로 직접 검증했으나 전부 이 사례
+//   시각대에는 해당 없음으로 확인됨(근본원인 미확정). 원인을 몰라도 재발을
+//   막기 위해, 달성/무효 확정 직전에 "등록시각~판정봉 실제 벽시계시간 ÷
+//   게이트값"으로 역산한 "봉당 소요시간"을, 그 타임프레임에서 실시간으로
+//   방금 전 실측된 봉간격 평균과 비교해서(고정값이 아니라 그 순간의 실측
+//   거래속도 기준이라 활발한 시간대/한산한 시간대 무관하게 정확) 비정상적
+//   으로(10배 이상) 빠르면 확정을 보류하고 계속 관찰만 하는 안전장치를
+//   추가(GATE_SANITY_*, recordRealBarInterval, isGateCountSane, 신규 함수).
+//   기존 게이트 카운팅/판정 로직은 전혀 안 건드리고, 검증 실패시 기존
+//   !gateOpen 분기(WAITING/PULLBACK 토글만)를 그대로 재사용하므로 새로운
+//   상태전이 경로가 늘지 않음 - Node.js 샌드박스(test_gate_sanity.js)로
+//   (1)정상속도 26봉 달성은 안 막힘 (2)이번 실사례와 동일 구조(gate=1036/
+//   35분)는 차단되고 로그 남김 (3)차단 후 시간이 더 지나 정상 패턴이 다시
+//   나오면 정상 확정됨(영구봉쇄 아님) (4)기준 실측치가 아직 없는 신규
+//   타임프레임은 오탐 없이 통과, 총 4가지 시나리오 전부 검증 완료.
+// [2026-09-26][v5.8 흰다이아몬드(오른쪽 구름대) 판정 - 케이스분리 재설계]
+//   사용자 지적: v5.7의 "평균 두께 threshold"가 얇지만 실제로 존재하는
+//   구름대까지 탈락시킴("얇아도 평탄구간이 넓고 삼각형이 예쁘면
+//   상관없다") - 그리고 실제 차트엔 넓은 평탄구간 안에서 잠깐 한 번
+//   아래로/위로 삐끗(V자)했다가 회복하는 형태도 있음. 사용자 결정: 여러
+//   기준을 하나로 합치지 말고 완전히 독립된 "케이스"로 나눠서, 나중에
+//   특정 케이스만 골라 끄거나 되돌릴 수 있게 한다 - 케이스1(두께평균,
+//   기존 v5.7 로직 그대로), 케이스2(얇아도 유지 - 크기 무관, 한 번도
+//   역전만 안 하면 통과), 케이스3(짧은 V자 역전 허용 - N=8봉 중 최대
+//   2봉까지 역전/소멸돼도 나머지가 정상이면 통과). 어느 하나라도
+//   통과하면 흰다이아몬드 확정, 통과한 케이스 번호를 PRETTY2_CONFIRMED
+//   신호줄 9번째 필드로 실어보내 대시보드 배지 마우스오버에 "몇 번
+//   케이스로 통과했는지" 표시(대시보드 v5.04/bridge_signals.py와 세트).
+//   Node.js vm 샌드박스 테스트(test9)로 케이스 간 중첩관계(1이면 항상
+//   2,3도 통과)와 각 케이스의 개별 통과/탈락 조건 전부 검증 완료.
+// [2026-09-26][v5.7 흰다이아몬드(checkRightCloud) 개선 - 비대칭 두께
+//   구름대 인식] 사용자가 실제 차트에서 오른쪽 구름대가 균일하지 않고
+//   꼭짓점쪽이 두껍고 현재쪽이 얇은 경우(또는 반대)도 있다고 지적,
+//   스크린샷으로 확인 - 기존 로직("N개 봉 전부 threshold 이상")은 이런
+//   비대칭 형태를 놓침. 개선: (1)단 한 봉이라도 두께가 0 이하(구름대
+//   소멸/역전)면 무조건 탈락(하드 플로어, 평균과 무관) (2)나머지는 N개 봉
+//   평균 두께가 threshold 이상이면 통과 - 두께가 앞/뒤로 몰려 분포돼도
+//   인식하되, 진짜 구름대가 없거나 순간적으로 뒤집힌 경우는 계속 걸러냄.
+//   Node.js vm 샌드박스 테스트(test8)로 4가지 시나리오(앞두꺼움/뒤두꺼움
+//   각각 통과, 전체적으로 너무 얇음 탈락, 평균은 두꺼워도 중간에 한 봉이라도
+//   역전되면 탈락) 전부 검증 완료, 틱봉 파일에서도 동일 함수(checkRightCloud)
+//   기준으로 동일 동작 확인.
+// [2026-09-26][v5.6 - 버전번호만 분봉과 동기화, 기능변경 없음] 이번 변경
+//   (실시간 무틱공백 정지+재조회)은 분봉 전용 구조적 결함이라 틱봉 파일은
+//   해당 없음(틱개수 기반 봉이라 "무틱 공백"이라는 개념 자체가 없음) -
+//   분봉 3개 파일과 버전번호만 맞춘다.
+// [2026-09-26][v5.5 신규 - 흰다이아몬드 배지(오른쪽 구름대 확인)] 사용자
+//   요청: 기존 다이아몬드(◆, checkPrettyTriangle - 왼쪽 평탄구간+뾰족한
+//   삼각형만 확인)는 절대 건드리지 않고, "삼각형 완성 후 반대편(오른쪽)
+//   에도 구름대가 유지되는지"까지 확인하는 별도 배지(◇ 흰다이아몬드)를
+//   추가. 설계 원칙(사용자 확정): (1)신규 신호검색 기준을 새로 만들지
+//   않는다 - 이미 다이아몬드를 통과한 신호에만 사후 보강판정을 얹는다.
+//   (2)새 스캔/새 차트요청 없이 기존 SignalCalculator.onBar()가 워밍업
+//   재생과 실시간 봉완결 양쪽에서 이미 매 봉마다 쌓고 있는 saHist/sbHist를
+//   그대로 재사용한다. (3)신호 등록 자체는 항상 즉시(오른쪽 구름대 확인을
+//   기다리지 않음) - 오른쪽 구름대는 꼭짓점 시점엔 존재하지 않는 미래
+//   데이터라 즉시 판정이 불가능하므로, calc.pendingPretty2 대기열에 걸어
+//   두고 매 onBar 호출마다 한 봉씩 나이를 먹여 N봉(=8, 왼쪽과 대칭)이
+//   지나면 checkRightCloud()로 확정한다. 확정 이벤트는 기존 신호처리
+//   파이프라인과 섞이지 않도록 별도 채널(calc.pretty2Events/
+//   drainPretty2Events)로만 흐르고, 신호파일엔 새 kind(PRETTY2_CONFIRMED)
+//   로 남겨 대시보드가 pk로 기존 행을 찾아 배지만 추가한다(새 행 생성
+//   안 함). Node.js vm 샌드박스 테스트로 (a)N봉째 정확히 확정되는지
+//   (b)신호검색 결과(results[])에는 절대 안 섞이는지 (c)구름대가 중간에
+//   한 번이라도 옅어지면 탈락하는지(지속 유지 요구) 3가지 검증 완료.
+// [2026-09-26][v5.4 근본수정 - 전체 구조 점검(테스트 기반), 실시간/재워밍업
+//   판정이력 중복 확정] 사용자 요청으로 "워밍업/재워밍업/실시간구독/신호
+//   검색·등록·판정이 일관되게 같은 결과를 내는 구조인지" Node.js vm
+//   샌드박스에 실제 코드를 그대로 로드해 3가지 시나리오를 실행 검증:
+//   [테스트1: 통과] 동일 가격이력을 warmup(resolveHistorically, OHLC
+//   저가->고가 순 재생)과 realtime(applyPriceToSignal, 틱 순서대로)
+//   양쪽에 통과시켜 동일 신호(ACHIEVED, 동일 봉)로 수렴함을 확인.
+//   [테스트2: 구조적 한계 확인, 코드 결함 아님] WAITING 상태에서 진입가를
+//   양쪽으로 관통하는 봉(고가>진입가>저가) 1개는 OHLC만으로는 실제
+//   틱순서를 복원할 수 없는 근본적 모호함이 있음 - resolveHistorically의
+//   AMBIGUOUS_BAR 가드가 이런 봉을 임의로 추측하지 않고 보수적으로
+//   INVALID 처리함을 확인(실제 틱순서에 따라 realtime은 ACHIEVED가 될
+//   수도 있었음을 재현) - 이건 봉데이터만으로 재구성하는 모든 백테스트/
+//   재워밍업 시스템의 공통 한계이며, 추측 대신 보수적으로 무효처리하는
+//   현재 설계가 올바른 판단이라고 결론.
+//   [테스트3: 실제 결함 발견+수정] 실시간이 신호를 부분적으로 처리한
+//   뒤(예: 눌림 확인까지만) 재워밍업이 들어오면, 최종판정 자체는 항상
+//   맞았지만(sig.state가 이미 전진해있어 안전) "전체 상태이력"에 같은
+//   전이단계가 중복으로 다시 찍히는 실제 결함을 재현 - 원인은
+//   processLiveBar가 카운팅 커서(lastAppliedBarEpoch)만 실시간과 동기화
+//   하고 판정 커서(lastJudgedBarEpoch)는 그대로 둬서, 재워밍업이 실시간이
+//   이미 처리한 구간을 signalEpoch부터 다시 통째로 재생했기 때문. 카운팅
+//   커서와 동일한 시점에 판정 커서도 함께 전진시키도록 수정 - 수정 후
+//   동일 테스트로 중복 이력이 완전히 사라지고 최종판정도 그대로 유지됨을
+//   재확인. 분봉/틱봉 6개 파일 전부 동일 적용(2안류에 이 구조가 있다면
+//   별도 확인 필요 - 이번 점검 범위 밖).
+// [2026-09-26][v5.3 근본수정 - 판정근거(사유) 표시 비대칭 2건, 구조 정리]
+//   사용자가 "달성됐는데 모달에 신호등록 한 줄뿐이고 사유칸도 텅 비는
+//   경우를 봤다, 판정을 여러 곳에서 따로 하는 것 같다"고 지적 - 실제로
+//   분봉/틱봉 파일을 서로 대조해 구조적 비대칭 2건을 확인:
+//   (1)[fn=...,gate=.../26bars] 판정근거 태그(어느 함수가 몇 봉째에
+//   판정했는지)가 틱봉엔 있는데 분봉엔 통째로 빠져있었음(pushStateHistory에
+//   extraDetail 파라미터 자체가 없었음) - 틱봉과 동일하게 이식.
+//   (2)realtime(updatePendingSignals) 경로가 REMOVAL_LOG에 남기는 detail이
+//   "REALTIME_RESOLVE@날짜 시각" 같은 짧은 태그뿐이라, 1차 STATUS_ACHIEVED/
+//   INVALID 매칭이 실패해 REMOVAL_LOG 복구경로로 넘어갈 때만 사유가 거의
+//   텅 비어 보였다(warmupResolve 경로는 이미 rReasonField 전체를 넘기고
+//   있어 문제 없었음) - 두 경로 모두 이미 계산해둔 reasonField(전체
+//   HISTORY 포함)를 넘기도록 통일. 두 건 다 분봉/틱봉 6개 파일 전부 동일
+//   적용해 앞으로는 어느 경로로 판정되든 모달/사유칸 표시가 일관됨.
+// [2026-09-25][v5.2 - 순환완료 로그에 실제수신+저품질 합계 명시] 사용자가
+//   v5.1 적용 후에도 [진행상황] 분자와 총원 사이 나머지가 어디로 갔는지
+//   확인이 안 된다고 재지적(로그 캡처에 "실제수신 106/110" 다음 줄이 바로
+//   "순환 완료"로 넘어가고 "저품질 유지중" 줄은 안 보임) - 코드상으로는
+//   completedCycles = filledCycles + degradedPeriods 항등식이 항상 보장돼
+//   106+4=110처럼 반드시 맞아떨어지지만, "저품질 유지중" 로그 자체가
+//   degradedList.length>0일 때만 찍히는 조건부 로그라 그 한 줄을 화면
+//   스크롤/캡처에서 놓치면 확인할 방법이 없었다. 근본 해결로, 순환완료
+//   ("★ [N번째 순환 완료]") 로그 한 줄 자체에 "실제수신 X + 저품질 Y = 총Z"
+//   형식으로 항상(저품질 0개여도) 집계를 박아넣어, 그 한 줄만 봐도 산수가
+//   맞는지 바로 검증 가능하게 함.
+// [2026-09-25][v5.1 근본수정 - 재시도큐 잔존(stale) 엔트리로 인한
+//   진행상황/재시도 숫자 불일치 재발] v5.0에서 "재조준 순간에 이미
+//   채워진 cycle이면 재시도큐에 안 넣는다"까지는 고쳤는데, 사용자가
+//   재확인해보니 여전히 분자(filledCycles)와 "실패했던 N개 재시도"가
+//   안 맞았음 - 원인은 순서: cycle X가 패스 앞쪽에서 먼저 실패해 큐에
+//   들어간 "뒤에", 전혀 다른 요청의 재조준이 X를 채워버리면
+//   (completedCycles[X]=true) 이미 큐에 들어가 있던 X의 엔트리는 그대로
+//   안 지워지고 남아있었다(등록 당시엔 정당한 실패였으므로 v5.0 체크로는
+//   못 막음). 큐를 실제로 소비(targetList에 이어붙이기) 직전에 한 번 더
+//   걸러서, 그 사이 다른 경로로 이미 채워진 cycle은 재시도 없이 조용히
+//   제외하도록 processNext()에 필터 추가(데이터 유실 없음 - 이미
+//   filledCycles에 정상 반영돼있음).
+// [2026-09-25][v5.0 근본수정 2건 - 진행상황/재시도 앞뒤불일치 + 대시보드
+//   missing 오판정] 사용자 지적 2건을 원인 추적해 수정(분봉 v5.0과 동일):
+//   (1)[프레임재조준 재시도큐 중복] 종목이 늘어나 응답이 뒤섞여 들어오는
+//   구조에서 #주기 지표로 실제 cycle을 역추적하는 재조준 로직 자체는
+//   정상 설계가 맞다고 확인됐으나, 재조준마다 "원래 요청한 cycle"을
+//   무조건 재시도큐로 보내던 부분이 문제였음 - 그 cycle이 이미 "다른"
+//   뒤섞인 응답으로 먼저 채워졌을 수 있는데도 매번 재시도큐에 또 넣어서,
+//   [진행상황] 분자(filledCycles)와 "실패했던 N개 재시도" 숫자가 서로 안
+//   맞아 보이던 원인. completedCycles로 이미 채워졌는지 확인 후, 이미
+//   채워졌으면 재시도큐 생략하도록 수정.
+//   (2)[대시보드 missing 오판정] registerPendingSignal이 SAVE_SCHEDULED
+//   파일줄의 실제시각(eventTime) 필드에 봉 시각(sdate+stime)을 그대로
+//   써왔음 - 대시보드는 이 필드를 "실제 등록 벽시계 시각"으로 믿고 "이
+//   시각 이후 하트비트에 없으면 missing" 판정을 하는데, WARM/재조준
+//   신호는 봉 시각이 과거라 등록 직후 첫 하트비트만으로도 즉시 missing
+//   (⚠️)으로 잘못 떴다(REAL 경로는 봉시각≈현재라 우연히 안 드러났을
+//   뿐). stateHistory 순서보장용 regWhenFallback(봉시각)은 그대로 두고,
+//   파일에 실어보내는 eventTime만 별도로 진짜 현재시각(nowServerTimeStr())
+//   으로 분리.
+// [2026-09-25][v4.12 근본수정 - 카운팅커서/판정커서 겸용으로 인한 영구 재판정
+//   불가 버그] v4.11(예외격리) 배포 후에도 T0340/T0345가 여전히 안 풀려서
+//   재조사한 결과, 별개의 더 근본적인 구조결함을 발견: processLiveBar(실시간
+//   봉완결)가 가격판정 없이 매 봉마다 lastAppliedBarEpoch만 전진시키는데,
+//   resolveHistorically(재워밍업 판정)가 그 "같은" 커서를 "여기까지 이미
+//   판정 끝남"으로 오인해서 그 이하 봉을 통째로 건너뛰고 있었다 - 그 결과
+//   실시간 판정이 어떤 이유로든 그 순간 놓친 진짜 돌파봉은, 재시작+전체
+//   재워밍업으로 그 봉을 다시 받아와도 커서가 이미 지나쳐있어 영원히
+//   재판정이 불가능했다(카운트만 되고 실제 판정은 한 번도 못 받은 구간이
+//   생기는 구조). Node.js 샌드박스로 이 정확한 조건(커서가 돌파봉보다
+//   앞서있는 상태에서 그 돌파봉을 포함한 bars를 재워밍업에 다시 넘김)을
+//   재현: 수정 전엔 null(미해결) 그대로, 수정 후엔 정확히 ACHIEVED로
+//   확정됨을 확인. lastJudgedBarEpoch(resolveHistorically 전용 판정커서)를
+//   신설해 카운팅(lastAppliedBarEpoch, 기존과 동일하게 실시간/워밍업이
+//   공유)과 판정(lastJudgedBarEpoch, 이 함수만 갱신)을 분리 - 기존 신호는
+//   이 필드가 없어(null) 자동으로 signalEpoch부터 재판정을 다시 시도하므로,
+//   특정 신호를 콕 집어 되돌리는 땜빵 없이 구조수정 하나로 과거에 이미
+//   막혀있던 신호까지 함께 풀린다. 기존 회귀테스트(예외격리 7건 + 판정게이트
+//   8건 + filledCycles 7건) 전부 재통과 확인 - 정상 흐름(카운팅=판정이
+//   항상 같이 가는 경우)은 동작 변화 없음.
+// [2026-09-25][v4.11 근본수정 - 신호1개 예외가 배열 전체 판정을 영구정지시키던
+//   버그] 실사용자가 26봉 게이트를 몇 배 초과하고 목표가 돌파도 확인된
+//   신호(T0340/T0345)가 감시중에서 영원히 안 풀리는 걸 발견 - 원인 규명
+//   결과 runPendingResolutionPass(933행)의 for-loop에 신호별 try/catch가
+//   없어서, 배열에서 그 신호들보다 먼저 등록된 신호 하나가 resolveFn
+//   처리중 예외를 던지면 그 뒤 모든 신호가 이번 패스에서 통째로 스킵되고,
+//   배열 순서가 안 바뀌니 다음 틱/사이클에도 똑같이 반복돼 영구정지로
+//   이어짐을 실제 원본함수를 Node.js 샌드박스에서 그대로 실행해 재현/증명
+//   (독립적으로 손상시킨 stateHistory 신호 1개로 뒤에 있는 정상 신호 2개가
+//   10틱 연속 전혀 처리 안 되는 것 확인). 이 예외는 상위 호출부
+//   (Main_OnUpdateMarket의 try{}catch(e){})에도 다시 삼켜져서 로그에
+//   아무 흔적도 안 남던 것도 함께 확인. FRAME_SHIFT_SUSPECT 딱지가 원인일
+//   가능성도 실제 등록경로 그대로 재현 테스트했으나 무관함을 확인(기각).
+//   신호별로 try/catch를 격리해서 하나가 깨져도 나머지는 계속 정상
+//   판정되게 하고, 깨진 신호의 pk/상태/게이트/에러메시지+스택을 진단로그
+//   (RESOLVE_EXCEPTION)와 신호파일에 즉시 남겨 다음 발생시 원인을 바로
+//   알 수 있게 함(더 이상 대시보드를 수동으로 뒤질 필요 없음).
+// [2026-09-25][v4.10 근본수정 - filled(가짜/보간)봉이 26봉 게이트+판정에
+//   섞이던 버그] 분봉 파일과 동일 결함 발견+수정 - Main_OnRcvChartEx가
+//   재조회 응답 누락시 직전 정상봉을 그대로 복사해 bar.filled=true로
+//   채우는데, resolveHistorically(워밍업 판정)가 filled 여부를 안 가려서
+//   가짜봉이 26봉 게이트 카운트와 달성/무효 판정에 그대로 섞여들 수
+//   있었다(재현 테스트로 확인: 실제관측 6개+filled 21개 -> 수정 전
+//   barsElapsed=26까지 올라가 가짜값으로 판정, 수정 후 barsElapsed=5로
+//   정확히 유지되고 미해결 유지). resolveHistorically 안에서 filled봉은
+//   게이트 카운트/가격판정 양쪽 다 건너뛰도록 수정.
+// [2026-09-25][v4.9 근본수정 - 진행상황 실제채움 오표시] 사용자가 [진행상황]
+//   로그의 분자/분모가 앞뒤로 안 맞는다고 지적, 재현 테스트로 확인:
+//   completedCycles(성공+degraded포기 합산)를 그대로 "실제 채워진 개수"라고
+//   표시하고 있었음(진짜 문제는 이 라벨과 실제 동작의 불일치). filledCycles를
+//   신설해 진짜로 데이터를 받은(예외 없이 성공 + 봉 1개 이상) 것만 센다 -
+//   degraded 포기분은 로그에 별도로 명시. 실제 소스코드를 Node.js vm
+//   샌드박스에서 그대로 실행하는 테스트(정상성공/degraded포기/처리중예외/
+//   빈응답/프레임재조준/로그문구 6종, 분봉 v4.9와 동일 스위트)로 검증 완료.
+//   (참고: completedCycles[thisCycle]=true를 try 성공경로 안에서만 찍는
+//   구조는 이 파일엔 원래부터 있었음 - 분봉 파일에서만 발견된 "예외나도
+//   무조건 완료처리" 결함은 이 파일엔 해당 없음)
+// [2026-09-25][v4.8 신규 - 저품질(degraded) 이관 대시보드 알림] 워밍업/재워밍업
+//   재조회에서 #주기 등으로 요청 프레임과 실수신 프레임이 어긋나는 경우가
+//   잦아 실측 실수신 프레임 기준으로 신호검색/등록/판정을 처리해왔는데,
+//   정작 "이번 순환에서 재시도를 다 써도 못 받아 다음 순환으로 이관된
+//   타임프레임" 정보는 예스트레이더 화면(MessageLog)에만 남고 대시보드
+//   에는 전혀 전달되지 않고 있었다(만들기로 했던 기능이 실제로는 안
+//   만들어져 있었음, 실사용자 확인). recordFailureForRetry()가 degraded로
+//   확정하는 시점에 DEGRADED_DEFERRED 신호줄을 OUTPUT_FILE에 새로 남겨
+//   bridge_signals.py/대시보드가 모달 알림으로 띄울 수 있게 한다(대시보드
+//   테이블 행으로는 안 뜨고 알림창에만 표시 - SYSTEM 알람들과 동일 패턴).
+// [2026-09-23][v4.6] 월물 U26(9월물)->Z26(12월물) 교체, 철회기능 제거(v4.5) 완료 반영
+// [2026-09-23][v4.5 추가 - 예쁜삼각형(다이아몬드 배지) 판정 이식] 분봉
+//   v4.4와 동일 - GOLD 최신본에서 checkPrettyTriangle 그대로 이식,
+//   대시보드 수정 불필요(범용 처리).
+// [2026-09-23][v4.5 - 봉데이터불안정 알람 팝업 제거 + #주기 기반 프레임
+//   밀림 감지 추가, 사용자 요청] 분봉 v4.4와 동일 변경 - 자세한 내용은
+//   그쪽 이력 참고. [사전준비 필요] 예스스탁 지표편집기에 "#주기" 지표를
+//   Plot1(DataCompress,"주기구분"), Plot2(BarInterval,"세부주기")로
+//   미리 등록해둬야 함.
+// [2026-09-14][v4.4 - 분봉(min) 파일과 동일 수준으로 맞춤] 오늘 분봉에
+//   적용된 작업들을 틱봉에도 이식: (1)철회후보 풀/복원 기능
+//   (retractionCandidates/checkAndConsumeRestoration 등) 전체 제거 -
+//   실제 데이터에 기여가 없고(값은 항상 새로 검색된 것 그대로 씀,
+//   wasRestored 표시만 붙임) 재시작초기화 로직만 복잡하게 만들던 부분
+//   (2)정확성 검증 방안1+3(다수결 합의+반복격리 경고)을 기존 BAR_MISMATCH
+//   이력(barCheckHistory)에 그대로 얹어 추가 - filled(보간대체값)는
+//   이력/투표 양쪽에서 제외하도록 min봉과 동일 기준으로 통일 (3)
+//   BAR_DATA_UNSTABLE_ALERT 필드형식을 다른 SYSTEM 알람과 동일 규격으로
+//   맞춤(대시보드 가격칸 오표시 방지). [틱봉 고유 차이] 틱봉은 period가
+//   "분"이 아니라 "틱개수"라 봉의 실제 마감시각을 계산할 수 없으므로,
+//   분봉에 추가한 "형성중여부(STILL_OPEN/ALREADY_CLOSED)" 진단은 이식
+//   안 함(분봉 전용으로 남김). 검증: 기존 회귀 18건 + 다수결/격리
+//   스트레스 9건 전부 재통과(사이클조건이 분봉과 달라 %15 배수로 맞춰
+//   재검증).
+// [2026-09-14][v4.0 - 분봉/틱봉 버전번호 통일 + 오늘자 작업 일괄반영] 분봉(v3.8)과
+//   틱봉(v3.6)이 서로 다른 버전번호로 따로 놀던 걸 4.0으로 통일. 이번 버전에
+//   묶인 변경사항: (1)등록 다음봉 재확인(휩쏘 자동철회) (2)실시간판정루프
+//   감사장치(auditPendingReassignment) 배선 보완 (3)판정경로 통합
+//   (runPendingResolutionPass 공용 오케스트레이터) (4)HOLD_MARGIN_THRESHOLD
+//   종목설정 테이블화 (5)죽은 확인단계 코드(requiredConfirmBars 등) 제거
+//   (6)분봉: MAX_BAR_COUNT 6000 상향 + 봉캐시 안정성게이트 재시작카운터리셋
+//   버그 수정(시각ms 기준 전환) (7)틱봉: 철회판정 안정성게이트 신규이식(실측
+//   재현으로 필요성 검증 후 적용). 전체 검증: Node.js 실행테스트 다수 통과
+//   (감사회귀/워밍업통합/휩쏘철회/철회안정성 각 파일별로 개별 확인).
+// [2026-09-14][v3.6 - 26게이트 상태불일치 버그 수정 + 판정근거 모달표시
+//   - SP500과 동일] 등록 즉시 initElapsed를 countBarsAfterEpoch로 숫자만
+//   재계산해서 채우던 방식이, 되짚기로 이미 지난 봉만큼 카운터는
+//   부풀리면서 state는 갱신 안 해서 다음 봉 하나에서 눌림+달성이 동시에
+//   터지는 버그였음(SP500 T0380 실측사례). trialSig의 최종 상태를
+//   재계산 없이 그대로 승격하도록 수정. 달성/무효 확정 이력에
+//   "[fn=...,gate=.../26bars]"를 남겨 모달에서 판정근거 확인 가능.
+// [2026-09-10][v3.5] 버전번호만 동기화(이 파일 자체는 내용변경 없음).
+// [2026-09-10][v3.4][임시진단][긴급수정] SUSPECT_LABEL_DUP 감지창을
+//   600초(10분)->20초로 축소 - 600초는 너무 넓어서 인접 타임프레임의
+//   정상적인 SB(목표가) 공유까지 전부 오탐(사용자 실측: 143건 스팸
+//   발생). 이미 고친 중복판정 허용오차(10초)보다 살짝만 넓게 잡음.
+// [2026-09-10][v3.3][임시진단] 라벨오귀속(사용자 실측: 300틱 신호가
+//   320틱으로 등록) 원인규명용 임시진단 추가 - 요청/응답 감사링버퍼
+//   (REQ_RESP_AUDIT_RING) + 등록시 이상탐지(checkSuspectLabelDup,
+//   SUSPECT_LABEL_DUP 태그). 평소엔 조용하고 실제 의심패턴 발견시만
+//   대시보드 알림창에 뜸. **원인 찾아서 고치면 이 진단 블록 전부
+//   제거할 것** - 코드 내 [임시진단] 태그로 전부 표시해둠.
+// [2026-09-10][v3.2] (1)isDuplicatePendingSignal - trueSdate/trueStime
+//   완전일치->10초 허용오차+가격체크 추가(틱봉 원본시각 자체가 재조회
+//   마다 살짝 흔들리는 현상 확인됨 - T0305/T0310/T0315 각각 2중등록
+//   사례로 확인). (2)RESET_PENDING_STATE_ON_START=true(이번 배포 한정,
+//   중복오등록 정리 목적 - 실행 후 반드시 다시 false로 되돌릴 것).
+// [2026-09-10][v3.1] MATCH_CONFIRMED 타임아웃-이후-추적 로직을
+//   나스닥100 분봉에서 틱봉으로도 이식(timeoutTrackedLabels).
+// [2026-09-10][버전 통일] 파일마다 버전번호가 따로 놀아서 헷갈린다는
+//   지적 - 지금부터 6개 파일(나스닥100/SP500/GOLD x 분/틱) 버전번호를
+//   항상 같이 맞춘다(내용/이력은 파일마다 다를 수 있어도 번호는 통일).
+// [2026-09-10] [저장예약(null) 표시 버그 수정] SAVE_SCHEDULED 상태이력이
+//   "저장예약(null)@가격"으로 찍히던 버그 수정 - regWhenFallback(신호형성
+//   시각) 명시 적용.
+// [2026-09-10][v2.6 - TIMEOUT_COOLDOWN_MS 3초->1초 축소] 사용자 지적:
+//   이미 1초로 늘려놓은 페이싱 위에 3초를 더 얹는 건 과했음. 1초로 축소.
+// [2026-09-10][v2.5 - 근거없는 추측성 수정 제거] 사용자 지적으로 재점검 -
+//   v2.3에서 넣었던 MAX_LF_BACKDATE_BARS=10 캡(이미 틀렸다고 밝힌 'lf
+//   폭주설'에 근거)과 PERIOD_MISMATCH 간격추정 검증(실측 없이 '그럴듯
+//   해서' 넣은 사후필터, v2.4의 chartEx.GetCode/GetCycle/GetPeriod 정식
+//   검증으로 이미 불필요해짐)을 둘 다 제거. 근거 있는 구조적 수정
+//   (TIMEOUT_COOLDOWN_MS, GetCode/GetCycle/GetPeriod 검증)만 남김.
+// [2026-09-10][v2.4 - 지각응답(유령응답) 오귀속 정식수정] v2.3의 간격추정
+//   (PERIOD_MISMATCH)은 사후 추정이라 근본수정이 아니었음을 스스로 인정 -
+//   외부 확인 결과 chartEx.GetCode(1)/GetCycle(1)/GetPeriod(1)로 응답의
+//   실제 종목코드/주기/구분을 직접 확인할 수 있다는 게 확인됨. 이제
+//   Main_OnRcvChartEx에서 응답을 소비하기 '전에' 이 값들을 지금 기다리는
+//   요청(reqCtx) 조건과 대조하고, 다르면 유령응답으로 폐기하고 계속
+//   기다린다(정상 매칭 전까진 큐에서 안 꺼냄). v2.3의 냉각시간(3초)/간격
+//   추정 검증은 2중 방어로 유지.
+// [2026-09-10][v2.3 - 되짚기(lf) 무한폭주 버그 근본수정] 실제 운영화면에서
+//   확인된 사례: SB가 26봉+ 평평한 횡보구간에서 SA도 그 구간 내내 SB 근처를
+//   오르내리며 3점 크로스조건을 매 오프셋마다 우연히 계속 만족시켜, 되짚기
+//   (lf) while루프가 "진짜 반복삼각형"을 찾은 게 아니라 배열 끝(캡=30)까지
+//   그냥 폭주해버림(실측: BEAR1이 5시간 넘게 과거로 되짚혀 동일가격/모양의
+//   "가짜" 중복신호로 감시목록에 등록됨). MAX_LF_BACKDATE_BARS=10으로 되짚기
+//   깊이에 상한을 둬서 원천 차단(별표 3단계에서 "10봉이상=최대"로 이미 쓰는
+//   값 재사용). 평탄구간 표시(flatRun1/2)는 lf와 무관한 별개 계산이라 영향
+//   없음.
+// [2026-09-10][v2.2b - 목표삼각형(선행평탄구간/뾰족여부) 신호검색 계산 추가]
+//   [미완료작업 3번, 스크립트 단] evalSignal이 flatRun1/flatRun2(선행평탄
+//   구간 실제 봉수, 기존엔 별표 0/0.5/1 단계로만 뭉뚱그려 썼음)를 반환값에
+//   추가하고, SignalCalculator.onBar가 폭2(BULL2/BEAR2) 신호의 두 후보
+//   꼭지점(index1/index2) 높이차 비율(APEX_SHARP_HEIGHT_RATIO=0.15)로
+//   "뾰족(한 지점이 확실히 더 높음)"인지 "뭉툭(두 봉 높이가 비슷한 고원)"
+//   인지 apexSharp로 판정한다(폭1은 후보가 하나뿐이라 항상 뾰족). 두 값을
+//   buildSignalLine의 11/12번째 필드로 함께 실어보낸다(9/10번째=기존
+//   꼭지점봉 서버시각+높이). [주의] 브릿지(bridge_signals.py)가 원래
+//   9/10번째 필드조차 파싱을 안 하고 있던 결함을 이번에 같이 발견해
+//   수정함 - 대시보드 헤더 개편과 세트로 별도 커밋에서 진행.
+// [2026-09-10][v2.2 - 철회사유 구분(요청봉수부족 vs 진짜수치초과) + 요청봉수
+//   부족시 감시목록제외 전환][미완료작업 1,2번] 분봉 v2.2와 동일 수정 -
+//   철회판정 루프에서 "이번 사이클엔 판단근거(최소 52봉)를 확보 못함" 상태를
+//   명시적으로 추적한다(psig._insufficientCoverageStreak). 예전엔 조용히
+//   건너뛰기만 해서, 신호가 너무 오래됐거나 초장주기 타임프레임이라 구조적
+//   으로 영원히 봉수를 확보 못하는 경우 감시목록에 무기한 쌓이는 문제가
+//   있었다. INSUFFICIENT_COVERAGE_EXCLUDE_STREAK(5)회 연속되면 "감시목록
+//   제외"로 처리 - 기존 STATUS_RETRACTED 전송경로를 재사용해 브릿지/대시보드
+//   수정 없이 화면에 반영되지만, 사유 필드로 "[요청봉수부족] 감시목록제외
+//   (진짜철회아님)..."과 "[진짜수치초과] RETRACTED_ON_WARMUP_RESTART(...)"를
+//   뚜렷이 구분한다. 요청봉수가 회복되면 스트릭은 즉시 0으로 리셋된다.
+// [2026-09-10][v2.1 - 등록시각을 신호형성시각으로 통일] 2안 v1.07~v1.09
+//   검증패턴 적용 - registeredWhen을 PC시계로 강제하지 않고 null로
+//   넘겨서, 원래 폴백(신호형성시각=sdate+stime)이 자연스럽게 쓰이게
+//   함. 실행검증으로 REGISTERED 표시시각이 신호형성시각과 정확히
+//   일치하는 것 확인 - 눌림확인(항상 신호형성시각 이후 봉만 재생)이
+//   구조적으로 등록보다 항상 뒤에 오게 보장됨.
+// [2026-09-09][v1.36 - 중복등록 근본수정: trueSdate 필드 누락+중복판정
+//   기준 오류] 분봉에서 실제사례(상세이력 완전동일한 신호 2개가 시각만
+//   달리 등록)로 확인된 결함을 틱봉에도 동일 적용: (1) buildNewSignalObject가
+//   trueSdate/trueStime을 신호객체 필드로 저장 안 하던 것 수정 (2)
+//   isDuplicatePendingSignal을 되짚기 표시시각+허용오차 대신 trueSdate/
+//   trueStime 정확일치 기준으로 변경. 워밍업 호출부(trialSig 등)도
+//   trueSdate/trueStime 누락분 보완.
+// [2026-09-09][v1.35 - 재시작초기화시 철회후보 풀도 완전히 비움]
+//   분봉 v1.35와 동일 수정 - "메모리 지우고 재시작"해도 철회후보 풀은
+//   그대로 남겨서 옛날 철회기록이 새 신호에 뒤섞여 붙는 문제가 있었음.
+//   이 경로에서만 철회후보 풀(메모리+Excel)도 함께 비우도록 수정.
+// [2026-09-09][v1.34 - 틱봉 재조회 여유치 개편] 82봉 고정+누적평균
+//   tickRate만 쓰던 방식을 개편 - 분봉과 동일한 원인(짧은 주기/한산한
+//   시간대에 여유가 부족)이 틱봉에도 있음을 확인하고 수정: 2안의
+//   시간대구분(PEAK_HOUR_START=20시~PEAK_HOUR_END=2시) 이식, 활발한
+//   시간대는 여유치 1.5배. 주기별 여유치 차등화(300틱이하=500,
+//   600틱이하=300, 600틱초과=200) - 요청자 명시적 지시값 적용.
+// [2026-09-09][v1.33 - 삭제~다음요청 최소대기 강제] 예스스탁 벤더 답변
+//   ("삭제에도 시간이 필요합니다, 삭제-생성 사이 여유를 두세요")을 반영.
+//   시뮬레이션으로 "삭제 호출 직후 0ms만에 다음 요청을 보내면, 방금
+//   지운 객체의 지각응답이 새 요청 응답으로 오인되어 엉뚱한 타임프레임에
+//   잘못된 데이터가 등록될 수 있다"는 걸 재현 확인 - 삭제 호출 시각을
+//   기록해두고, 최소 1000ms(REMOVE_TO_NEXT_REQUEST_MIN_MS) 지나기 전엔
+//   다음 요청을 안 보내고 대기(nEventID=7)하도록 수정. 독립 삭제타이머
+//   (nEventID=5)도 동일하게 시각 기록. 수정 후 시뮬레이션으로 "1000ms
+//   전엔 요청 안 나가고, 1000ms 후엔 정상적으로 나감" 재검증 완료.
+// [2026-09-08][v1.32 - 보라색 별표(왼쪽평탄구간 표시) 복구] 되짚기(lf)
+//   계산을 "크로스패턴 반복성립" 기준으로 고치면서, 같은 lf를 재사용하던
+//   별표까지 같이 죽어버린 문제를 되짚기와 완전히 분리해서 해결 -
+//   별표는 원래 목적대로 flatRun(SB불변기간)을 독립적으로 다시 계산.
+// [2026-09-07][v1.31 - 워밍업 확인단계 이중계산 성능문제 제거]
+//   required=0으로 무력화만 하고 남아있던 "후보봉까지 별도 계산기로
+//   처음부터 재생"하는 이중계산 코드를 완전 삭제 - 여러 스크립트
+//   동시실행시 지연(하트비트 62초 간격) 재현의 원인으로 추정.
+// [2026-09-07][v1.30 - 2안 SP500 10틱단위 정식본에서 검증된 긴급수정 3건
+//   이식] (1)되짚기(lf) 계산을 "SB불변기간"이 아니라 "크로스패턴 자체의
+//   반복성립"으로 재검사하도록 수정 (2)게이트(signalEpoch)를 백데이팅
+//   안 된 trueSdate/trueStime 기준으로 분리 (3)확인단계(노이즈필터링)
+//   제거 - 1안은 대기열(pendingConfirmation) 구조 자체가 최소 1봉
+//   지연을 만들기 때문에, required=0만으로는 부족해서 processLiveBar/
+//   processRealtimeOnlyBar를 대기열 없는 즉시등록 구조로 재작성함
+//   (2안과 다른 추가조치 필요했던 부분). 원본(v1.16) 대조 실행테스트로
+//   evalSignal 완전 일치 검증 완료.
+// [2026-09-07][v1.27 - 1안/2안/2+1안 3파일 버전통일] 세 파일이 각각
+//   v1.17/v1.17/v1.26으로 따로 놀던 것을 v1.27로 통일. 이번 버전에서
+//   3파일 교차검증으로 추가 발견/수정한 것: HOLD_MARGIN_THRESHOLD
+//   SP500=3pt로 통일(나스닥100=10pt와 구분), [객체:N] 진단로그 포맷
+//   통일(MessageLog+진단파일 둘 다).
+// [2026-09-07][2+1안 v1.26에서 검증된 근본수정 이식] 아래 항목을 1안 고유
+//   구조(전체재계산+trialSig 즉시판정)에 맞춰 포팅:
+//   1) nowServerTimeStr() UTC+미국서머타임 직접계산으로 재설계
+//   2) REGISTERED 파일쓰기 실패시 재시작 보완용 _registeredLineWritten 플래그
+//   3) 신호세기(leftFlatStar) 기반 확인단계 - 실시간검색(pendingConfirmation)/
+//      워밍업검색(confirmWarmupCandidates)/판정(_pendingResultConfirm)/
+//      철회(_pendingRetractionConfirm) 4곳 전부, advanceConfirmationCounter()
+//      공용함수로 통일(2안/2+1안과 완전 동일 코드로 검증됨)
+//   4) resolveHistorically가 확인단계 기각시 stateHistory/resolveReason
+//      유령기록을 스냅샷/복원으로 완전 롤백(confirmHistoricalResult)
+//   5) 철회조건 4가지(null/정상/유예구간/명확철회) 명시적 분리
+//   6) 같은 과거사건 중복기각로그 방지(loggedRejectedCandidates)
+//   [추가 발견 - 2안/2+1안 대조] evalSignal의 lf(평탄구간 되짚기) 시작
+//   인덱스가 2안/2+1안과 달라 폭1신호 origin이 1봉씩 밀리던 불일치를
+//   발견해 2안/2+1안과 동일한 lf1(index2부터)/lf2(index3부터) 분리
+//   방식으로 통일 - 이제 evalSignal/SignalCalculator는 세 파일 모두
+//   바이트단위로 동일(주석 제외 diff 0건, 실행 테스트로 검증완료).
+//   [철회 유예범위] HOLD_MARGIN_THRESHOLD를 나스닥100=10pt, SP500=3pt
+//   기준으로 세 파일 전부 3pt로 통일(기존 1안=0.5pt, 2안/2+1안=10pt였음).
+//   [영향없음 확인] BAR_MISMATCH 검증(%15로 수정됨)/Main_OnStart
+//   KillTimer(1~10) 강제초기화는 1안에 이미 존재.
+// [2026-09-04] 원본(v1.14, CHART_PERIOD_TICK 미선언은 실측 결과 불필요한
+//   수정으로 확인돼 반영 안 함)에 3가지만 재적용: (1)삭제-요청 순서보장
+//   (예스스탁 공식답변) (2)하트비트 워밍업완료전 조기시작 방지 (3)같은
+//   평탄구간=같은 신호 인식(lf 되짚기, T0550류 중복등록 방지)
+// [이력] v1.11 즉시재시도(재시도큐+degraded추적) 추가 / 워밍업이력을 실시간계산기(liveCalcs)로 이식 / REALTIME_TRACK_ENABLED 활성화 / v1.12 degraded복구(1분주기, 본순환에 삽입) 추가 / 응답매칭실패·지각응답시 차트객체 삭제큐 누락 수정(장시간 미삭제 누적->다운 원인) / v1.13 등록경로 즉시태그(WARM/REAL) 추가 - REGISTERED 즉시기록 자체가 없던 것도 함께 신설(2안 commitPendingSignal과 동일 패턴, 테스트로 확정) / v1.14 2안 전체함수 대조로 발견된 잔여 불일치 일괄보완: pushStateHistory 반환값(RETRACTION_BASIS 오염버그 대칭수정) / excelUntrackSignal 즉시quicksave / auditPendingReassignment(조용한신호소실 감시장치, 재판정+철회 두 루프 모두 연결) / 철회블랙리스트(addRetractionCandidate/checkAndConsumeRestoration/purgeExpiredRetractionCandidates) 신설+등록/철회/RESET/엑셀저장복원 전체 배선 / recordFailureForRetry degraded콜드스타트 시딩 / 엑셀 철회블랙리스트도 함께 저장복원+대시보드 부분실패알림
+// [1안][삭제 후 매번 전체 재워밍업][틱봉 단독본]
+// [종목/월물] 하단 MARKET_DATA_CODE / INSTRUMENT_NAME 참고 (이 두 값만 바꾸면
+//   다른 종목으로 전환됨) / [분류] 틱봉 30~1000(전체 순환대상)
+// ================================================================================
+// [1안 핵심 구조]
+//  1. ReqChartEx로 최근 이력을 매번 새로 요청
+//  2. Main_OnRcvChartEx에서 전체 이력을 처음부터 다시 계산(재워밍업과 동일)
+//  3. Main.RemoveObject(chartEx)로 삭제 - 단, 크래시 방지를 위해 그 이벤트
+//     안에서 즉시 부르지 않고, 타이머로 지연을 둔 뒤 다른 이벤트에서 부름
+//  4. 21개 타임프레임을 순차로 반복(한 바퀴 끝나면 처음부터 다시) - 어느
+//     순간에도 살아있는 차트객체는 최대 1개(순차처리라서 겹칠 일이 없음)
+//  5. GATE(26봉)/철회판정은 매 사이클마다 항상 "공식이력 재계산" 기준으로
+//     새로 산출됨 - 2안처럼 별도의 누적 카운터를 안 쓰므로 재시작/재조회에
+//     따른 카운트 오차 문제 자체가 구조적으로 없음(매번 원본에서 다시 셈).
+// [2026-08-09 개정][종목 이식성] MARKET_DATA_CODE / INSTRUMENT_NAME 딱
+//   2개만 바꾸면 다른 종목으로 그대로 전환되도록, 파일경로/저장키/종목명
+//   표기가 전부 이 두 변수에서 파생되도록 정리함(하드코딩 문자열 제거).
+// [2026-08-09 개정][ReqChartItem 문법] 예스스팟 공식 예시와 동일하게
+//   생성자에 인자를 한번에 전달하는 방식으로 통일함: new ReqChartItem(code,
+//   cycle, period, count, countKind).
+// [2026-08-11 버그수정] pendingRemoveObject(단일변수) → pendingRemoveObjects(큐)
+//   로 교체. 페이싱(PACING_MS_MIN=0)이 내려간 상태에서 이전 사이클의 300ms
+//   지연삭제 타이머가 돌기 전에 다음 사이클 응답이 도착하면 단일변수가
+//   덮어써져 이전 차트객체가 영원히 RemoveObject되지 않고 누적되는 결함이
+//   있었음(2안/1안분봉과 동일 패턴). 이제는 예약된 모든 객체를 큐에 쌓아두고
+//   타이머 발동 시 전량 순회 삭제한다.
+// [2026-08-11][실사용 전환] 원래 "TEST"용으로 분리돼 있던 저장키
+//   (_tick_1an_test_)와 RESET_PENDING_STATE_ON_START=true(시작할 때마다
+//   감시목록 초기화)를 실사용 설정으로 되돌림: 저장키를 2안 틱봉전용과
+//   동일한 "_tick_oba_" 접미사로 통일해서 1안틱봉/2안틱봉전용/2안통합(틱측)
+//   이 감시목록을 공유하고, RESET을 false로 바꿔 재시작해도 이어감.
+// ================================================================================
+
+var MARKET_DATA_CODE = "NQZ26"; // [2026-09-25][v5.0] GOLD(GCZ26)에서 SP500용으로 종목코드만 교체 - 실제 예스스팟 코드로 반드시 확인 후 교체
+var INSTRUMENT_NAME = "NASDAQ100"; // 신호파일에 찍히는 종목 표기(itemName)
+var CONTRACT_SUFFIX = MARKET_DATA_CODE.slice(-3);
+var INSTRUMENT_TAG = INSTRUMENT_NAME + " " + CONTRACT_SUFFIX;
+// [제거][사용자 요청][철회기능 전체 제거] HOLD_MARGIN_THRESHOLD(_BY_INSTRUMENT) 삭제됨(사용처 없어짐)
+// 폴더/파일명 접두어는 INSTRUMENT_NAME을 소문자로 바꿔 그대로 사용(예:
+// "NASDAQ100" -> "nasdaq100"). 기존 폴더명과 완전히 동일하게 맞추고 싶으면
+// 이 한 줄만 원하는 문자열로 고정해서 바꾸면 됨.
+var INSTRUMENT_FOLDER = INSTRUMENT_NAME.toLowerCase();
+var OUTPUT_FILE = "C:\\dashboard_txt\\data\\" + INSTRUMENT_FOLDER + "\\" + INSTRUMENT_FOLDER + "_yesspot_signals_" + CONTRACT_SUFFIX + ".txt";
+// [2026-08-11][통일] 2안 틱봉전용과 동일한 접미사(_tick_oba_) - 1안틱봉/
+// 2안틱봉전용/2안통합(틱측) 세 가지 중 무엇을 켜도 감시목록을 공유한다.
+// [제거][사용자 요청][검증완료] PENDING_STATE_KEY 삭제됨 - 실제 상태저장은
+// Excel1.SetData(EXCEL_SHEET, excelShardCell(...))로 이뤄지고 이 키
+// 문자열은 어디서도 안 쓰임(끝까지 추적 확인).
+var RESET_PENDING_STATE_ON_START = false; // [2026-09-29][사용자 요청] true로 잠깐 켰다가 다시 false로 복귀 - 재시작해도 기존 감시목록(pendingSignals)을 그대로 보존한다.
+// [온/오프 스위치] true면 기존과 동일하게 실시간 틱으로 신규신호 검색
+// (liveBuilders/realtimeOnlyBuilders)과 대기신호 판정(updatePendingSignals)
+// 이 함께 돈다. false로 두면 이 실시간 트랙 전체가 꺼지고, 차트 재조회
+// (워밍업/재워밍업) 순환만으로 신호검색·판정이 이뤄진다. 단, 1000틱 초과
+// 구간(REALTIME_ONLY_START~END)은 애초에 차트조회 자체가 불가능한 구간
+// 이라, 꺼두면 그 구간은 신호검색이 전혀 안 됨(테스트 목적상 감안할 것).
+var REALTIME_TRACK_ENABLED = true; // [2026-09-02][보완] 실시간 검색/판정 활성화
+var START_CYCLE = 30, END_CYCLE = 1000; // [전체구간] 차트조회 가능한 30~1000틱(5틱단위 195개)은 1안 순환대상
+var REALTIME_ONLY_START = 1005, REALTIME_ONLY_END = 1500; // [2026-09-07][5틱단위 통일] 2+1안(END_CYCLE_TICK_CHART+5)과
+                                                            // 동일 시작점으로 맞춤(기존 1010은 10틱단위 시절 값이 그대로 남아있던 것).
+                                                            // 1000틱 초과는 차트조회 자체가 불가능해서
+                                                            // 순환대상이 아니라 실시간 틱 자체재구성으로만 추적(2안과 동일한 방식)
+var REQUIRED_BAR_DELAY = 26;
+// [신규][2026-09-29][게이트 신뢰성 안전장치 - 사용자 실사례(T0840/BULL1
+// 20260923 04:35:37) 기반] 26봉 게이트를 채웠다고 판단해서 달성/무효를
+// 확정하기 직전에, "등록시각부터 지금 판정봉까지 실제 벽시계 시간 ÷
+// 게이트값(barsElapsedSinceRegistration)"으로 역산한 "봉 1개당 평균
+// 소요시간"이 같은 타임프레임에서 실시간으로 실제 관측된 최근 봉간격
+// 평균보다 비정상적으로(GATE_SANITY_MIN_RATIO배 이상) 짧으면 확정을
+// 보류하고 계속 관찰만 한다. 거래량이 많은 시간/적은 시간을 구분해서
+// 고정값과 비교하는 게 아니라, 그 타임프레임 자체의 "방금 전 실측 속도"와
+// 비교하므로 시간대와 무관하게 정확하다. 검증에 걸리면 기존 !gateOpen
+// 분기(WAITING/PULLBACK 토글만, 확정 안 함)를 그대로 재사용하므로 새로운
+// 상태전이 경로가 늘어나지 않고, 게이트 카운팅 로직 자체도 전혀 안
+// 건드린다(그 위에 얹는 검증 레이어).
+var GATE_SANITY_MIN_SAMPLES = 5;      // 이만큼의 실측 봉간격이 쌓이기 전엔 판단 보류(오탐 방지 우선)
+var GATE_SANITY_MIN_RATIO = 10;       // 최근 실측 평균보다 이 배수 이상 빠르면 의심
+var RECENT_BAR_INTERVAL_WINDOW = 20;  // 타임프레임별 최근 몇 개 간격을 기준으로 삼을지
+var recentBarIntervals = {};      // label -> [최근 실측 봉간격(초), ...] (processLiveBar에서만 갱신 - 워밍업 일괄재생 봉은 기준에서 제외)
+var lastRealBarEpochByLabel = {}; // label -> 마지막으로 실시간 완결된 봉의 epoch
+function recordRealBarInterval(label, barEpochNow) {
+    var prevEpoch = lastRealBarEpochByLabel[label];
+    if (prevEpoch !== undefined && prevEpoch !== null && barEpochNow > prevEpoch) {
+        if (!recentBarIntervals[label]) recentBarIntervals[label] = [];
+        recentBarIntervals[label].push(barEpochNow - prevEpoch);
+        if (recentBarIntervals[label].length > RECENT_BAR_INTERVAL_WINDOW) recentBarIntervals[label].shift();
+    }
+    lastRealBarEpochByLabel[label] = barEpochNow;
+}
+function recentAvgBarIntervalSec(label) {
+    var arr = recentBarIntervals[label];
+    if (!arr || arr.length < GATE_SANITY_MIN_SAMPLES) return null; // 기준 삼을 실측치 부족 - 판단 보류
+    var sum = 0;
+    for (var i = 0; i < arr.length; i++) sum += arr[i];
+    return sum / arr.length;
+}
+function isGateCountSane(sig, curDateStr, curTimeStr) {
+    var baseline = recentAvgBarIntervalSec(sig.tf);
+    if (baseline === null) return true; // 기준 없으면(신규 타임프레임/워밍업 직후) 안전하게 통과 - 오탐 방지 우선
+    var gateCount = sig.barsElapsedSinceRegistration || 0;
+    if (gateCount <= 0) return true;
+    var curEpoch = dateTimeToEpochApprox(String(curDateStr), curTimeStr);
+    var realElapsedSec = curEpoch - sig.signalEpoch;
+    if (realElapsedSec <= 0) return true;
+    var impliedSecPerBar = realElapsedSec / gateCount;
+    return impliedSecPerBar >= (baseline / GATE_SANITY_MIN_RATIO);
+}
+function logGateSanitySuspectOnce(sig, whenStr) {
+    if (sig._gateSanityLogged) return;
+    sig._gateSanityLogged = true;
+    try {
+        logDiagnostic("[DIAG][GATE_SANITY_SUSPECT] label=" + sig.tf + " kind=" + sig.kind + " price=" + Number(sig.price).toFixed(2) +
+            " gate=" + (sig.barsElapsedSinceRegistration || 0) + "/" + REQUIRED_BAR_DELAY +
+            " signalEpoch=" + sig.signalEpoch + " at=" + whenStr +
+            " baselineSecPerBar=" + (recentAvgBarIntervalSec(sig.tf) || "?") +
+            " - 게이트가 열렸다고 판단됐지만 최근 실측 봉간격 대비 너무 빨라 확정을 보류함");
+    } catch (e) {}
+}
+var HEARTBEAT_INTERVAL_MS = 30000;
+var TICK_TIER1_UNTIL = 500, TICK_TIER1_COUNT = 5000, TICK_TIER2_START = 600, TICK_TIER2_COUNT = 4000, TICK_TIER2_END = 700, TICK_TIER3_START = 800, TICK_TIER3_COUNT = 2000;
+function computeRequestCount(cycle) {
+    var count;
+    if (cycle <= TICK_TIER1_UNTIL) count = TICK_TIER1_COUNT;
+    else if (cycle <= TICK_TIER2_START) count = TICK_TIER1_COUNT - Math.round((TICK_TIER1_COUNT - TICK_TIER2_COUNT) * (cycle - TICK_TIER1_UNTIL) / (TICK_TIER2_START - TICK_TIER1_UNTIL));
+    else if (cycle <= TICK_TIER2_END) count = TICK_TIER2_COUNT;
+    else if (cycle <= TICK_TIER3_START) count = TICK_TIER2_COUNT - Math.round((TICK_TIER2_COUNT - TICK_TIER3_COUNT) * (cycle - TICK_TIER2_END) / (TICK_TIER3_START - TICK_TIER2_END));
+    else count = TICK_TIER3_COUNT;
+    return Math.ceil(count / 10) * 10;
+}
+var lastCycleBarInfo = {}; // fileLabel -> { newestEpoch }
+function oldestPendingSignalEpoch(fileLabel) {
+    var oldest = null;
+    for (var i = 0; i < pendingSignals.length; i++) {
+        var s = pendingSignals[i];
+        if (s.tf === fileLabel && (s.state === "WAITING" || s.state === "PULLBACK")) {
+            if (oldest === null || s.signalEpoch < oldest) oldest = s.signalEpoch;
+        }
+    }
+    return oldest;
+}
+// [신규][2026-09-09][틱봉 여유치 개편 - 시간대구분+주기별 차등]
+// 예전엔 tickRate(스크립트 시작부터의 누적평균)만 쓰고, 여유치도 82
+// 고정이었다 - 장 활발한 시간/한산한 시간을 구분 못 하고, 짧은 주기
+// (틱이 자주 도는)와 긴 주기를 똑같이 취급하는 문제가 분봉에서 먼저
+// 확인됐던 것과 동일 원인. 2안의 시간대구분(PEAK_HOUR_START/END)을
+// 그대로 이식하고, 여유치를 주기별로 차등화: 300틱이하=+500,
+// 600틱이하=+300, 600틱초과=+200.
+var PEAK_HOUR_START = 20;
+var PEAK_HOUR_END = 2;
+function isPeakVolumeWindowKST() {
+    var h = new Date().getHours();
+    if (PEAK_HOUR_START <= PEAK_HOUR_END) return h >= PEAK_HOUR_START && h < PEAK_HOUR_END;
+    return h >= PEAK_HOUR_START || h < PEAK_HOUR_END; // 자정걸침(예: 20~02시)
+}
+function tickCoverageFloor(cycle) {
+    return cycle <= 300 ? 500 : (cycle <= 600 ? 300 : 200);
+}
+function computeAdaptiveRequestCount(cycle, fileLabel) {
+    var originalMax = computeRequestCount(cycle);
+    if (windowNeedsFull[fileLabel]) return originalMax; // [v5.17] 직전 응답이 가장 오래된 감시신호를 못 덮음 -> 최대 크기
+    var info = lastCycleBarInfo[fileLabel];
+    var nowEpoch = lastTickEpoch || Math.floor(Date.now() / 1000);
+    var scriptElapsedSec = Math.max(1, (Date.now() - scriptStartTime) / 1000);
+    // [수정] 누적평균 대신, 지금이 활발한 시간대인지에 따라 관측된
+    // 누적평균을 참고치로만 쓰되, 활발/한산 여부로 최종 여유치를 가른다.
+    var tickRate = totalTicksReceived / scriptElapsedSec;
+    var baseFloor = tickCoverageFloor(cycle);
+    var peakMultiplier = isPeakVolumeWindowKST() ? 1.5 : 1; // 활발한 시간대는 여유치를 1.5배로
+    var coverageFloor = Math.ceil(baseFloor * peakMultiplier);
+    var oldestEpoch = oldestPendingSignalEpoch(fileLabel);
+    if (oldestEpoch !== null && tickRate > 0) {
+        var barsSinceOldest = Math.ceil(Math.max(0, nowEpoch - oldestEpoch) * tickRate / cycle);
+        coverageFloor = Math.max(coverageFloor, barsSinceOldest + baseFloor);
+    }
+    if (!info) return originalMax; // 첫 요청은 항상 최대치(전체이력 확보)
+    var elapsedSec = Math.max(1, nowEpoch - info.newestEpoch);
+    var expectedNewBars = Math.ceil(elapsedSec * tickRate / cycle);
+    var adaptiveCount = Math.ceil(expectedNewBars * 1.5) + baseFloor;
+    return Math.min(originalMax, Math.max(coverageFloor, adaptiveCount));
+}
+
+var DUP_SIGNAL_TIME_TOLERANCE_SEC = 120;
+var REQUEST_TIMEOUT_MS = 10000;
+// [신규][2026-09-10][타임아웃 기준 추적 - 나스닥 분봉과 동일 이식] 이
+// 라벨이 타임아웃난 적 있으면 true - 그 다음 정상매칭될 때 딱 한 번만
+// 로그를 남기고(추적 종료) 다시 삭제한다.
+var timeoutTrackedLabels = {};
+// [수정][2026-09-10][냉각시간 1초로 축소] 타임아웃 시 pacingOnCycleFailure()가
+// 이미 pacingMsCurrent를 PACING_MS_MAX(1000ms)로 올려놓는데, 여기에 3초를
+// 추가로 얹은 건 과했음(총 4초 지연). 기존 1초 페이싱 인상과 결이 맞게
+// 1초로 축소 - 다음 요청까지 총 대기시간은 pacingMsCurrent(1초)+1초=2초.
+var TIMEOUT_COOLDOWN_MS = 1000;
+var MAX_RETRY_ATTEMPTS_PER_PASS = 3;
+// [2026-09-02][degraded복구 보완] 분봉본과 동일 패턴
+var DEGRADED_RECOVERY_INTERVAL_MS = 60 * 1000;
+var degradedRecoveryPending = {};
+// [제거][사용자 요청][검증완료] CYCLE_PACING_MS 삭제됨 - 실제 페이싱은
+// pacingMsCurrent 변수가 담당하고 이건 어디서도 안 읽힘.
+var PACING_MS_MAX = 1000, PACING_MS_MIN = 0, PACING_STEP_DOWN_MS = 100, PACING_OK_STREAK_TO_STEPDOWN = 5;
+var pacingMsCurrent = PACING_MS_MAX, pacingOkStreak = 0;
+function pacingOnCycleSuccess() {
+    pacingOkStreak++;
+    if (pacingOkStreak >= PACING_OK_STREAK_TO_STEPDOWN && pacingMsCurrent > PACING_MS_MIN) {
+        pacingMsCurrent = Math.max(PACING_MS_MIN, pacingMsCurrent - PACING_STEP_DOWN_MS);
+        pacingOkStreak = 0;
+    }
+}
+function pacingOnCycleFailure() { pacingMsCurrent = PACING_MS_MAX; pacingOkStreak = 0; }
+
+var REMOVE_OBJECT_DELAY_MS = 300;
+
+var scriptStartTimeStr = null, scriptStartTime = null;
+function logMsg(msg) {
+    if (!scriptStartTimeStr) scriptStartTimeStr = "NOT_STARTED";
+    // [근본수정][2026-09-07][화면표시 포맷 통일] 2안/2+1안은 MessageLog
+    // 줄머리에 [객체:N]을 표시하는데 1안만 빠져있었다 - 동일 지표
+    // (pendingRemoveObjects, 삭제대기 중인 객체수)로 통일.
+    var objCount = (typeof pendingRemoveObjects !== "undefined") ? pendingRemoveObjects.length : 0;
+    Main.MessageLog("[START:" + scriptStartTimeStr + "][" + INSTRUMENT_TAG + "][객체:" + objCount + "][1안틱봉] " + msg);
+}
+function timedPrintOnFile(path, content) { Main.PrintOnFile(path, content); }
+
+// [2026-08-11][통일] 2안 틱봉전용과 동일한 진단로그 파일명(_diagnostic_log_tick_oba_)
+var DIAGNOSTIC_OUTPUT_FILE = "C:\\dashboard_txt\\data\\" + INSTRUMENT_FOLDER + "\\" + INSTRUMENT_FOLDER + "_diagnostic_log_tick_oba_" + CONTRACT_SUFFIX + ".txt";
+var diagnosticBuffer = [];
+var DIAGNOSTIC_BUFFER_MAX = 3000;
+// [제거][사용자 요청][검증완료] DIAG_FILE_SIZE_CAP_BYTES/diagCapWarnedOnce
+// 삭제됨 - 파일크기 제한을 실제로 검사하는 코드가 없어서 선언만 있던 상태.
+var diagBytesWrittenApprox = 0;
+// [2026-09-07][3파일 QUIET_DIAG_TAGS 통일] 원칙: 실패/예외/부정확검증
+// 같은 "즉시 확인 필요한 것"만 화면(디버깅창)에 남기고, 나머지 정상
+// 운영 로그는 전부 QUIET 처리한다. QUIET이어도 진단파일엔 그대로 다
+// 남고(logDiagnostic은 QUIET 여부와 무관하게 항상 파일에 씀) 대시보드
+// (bridge_signals.py가 진단파일 원문을 그대로 스트리밍)에서 확인
+// 가능하므로 정보 유실이 아니다 - 화면 소음만 줄인다.
+// [화면에 남기는 것] REMOVE_OBJECT_FAILED/REQUEST_EXCEPTION/
+//   REQUEST_FAILED/BAR_MISMATCH (2안/2+1안엔 추가로 STALL_ALERT/
+//   STALL_RECOVERED/EXCEL_SHARD_LOAD_FAILED)
+var QUIET_DIAG_TAGS = ["[DIAG][REQUEST_TIMEOUT]", "[DIAG][WINDOW_NOT_COVERING]", "[DIAG][ACTUAL_COUNT]", "[DIAG][ADAPTIVE_GAP_DETECTED]", "[DIAG][CYCLE_DONE]", "[DIAG][DEDUP_PRUNE]", "[DIAG][DEGRADED_COLDSTART]", "[DIAG][REQUEST_SENT]", "[DIAG][RESOURCE]"]; // [정리][사용자 요청] REQUEST_TIMEOUT/SIGNAL_CANDIDATE/SIGNAL_CANDIDATE_REJECTED 제거(로그 자체를 없앰)
+function logDiagnostic(msg, curDateStr, curTimeStr) {
+    var isQuiet = false;
+    for (var qi = 0; qi < QUIET_DIAG_TAGS.length; qi++) { if (msg.indexOf(QUIET_DIAG_TAGS[qi]) === 0) { isQuiet = true; break; } }
+    if (!isQuiet) logMsg(msg);
+    var ts = (curDateStr && curTimeStr) ? (curDateStr + " " + curTimeStr) : "";
+    // [근본수정][2026-09-07][진단파일 포맷 통일] 2안/2+1안 진단파일은
+    // "시각\t[객체:N]\t메시지" 3컬럼 포맷인데, 1안만 "시각\t메시지" 2컬럼
+    // 포맷이라 세 파일 진단로그를 같은 파서로 함께 분석하려 하면 1안만
+    // 컬럼이 안 맞아 깨지는 문제가 있었다. 1안도 동일하게 삭제대기 중인
+    // 객체수(pendingRemoveObjects, 2+1안과 동일 지표)를 [객체:N]으로
+    // 끼워넣어 컬럼 구조를 통일한다.
+    var objCount = (typeof pendingRemoveObjects !== "undefined") ? pendingRemoveObjects.length : 0;
+    diagnosticBuffer.push(ts + "\t[객체:" + objCount + "]\t" + msg);
+    if (diagnosticBuffer.length > DIAGNOSTIC_BUFFER_MAX) diagnosticBuffer = diagnosticBuffer.slice(diagnosticBuffer.length - DIAGNOSTIC_BUFFER_MAX);
+}
+function flushDiagnosticLog() {
+    if (diagnosticBuffer.length === 0) return;
+    try { var payload = diagnosticBuffer.join("\n") + "\n"; timedPrintOnFile(DIAGNOSTIC_OUTPUT_FILE, payload); diagBytesWrittenApprox += payload.length; diagnosticBuffer = []; } catch (e) {}
+}
+
+var DEDUP_RETENTION_SEC = 7 * 24 * 3600;
+var seenKeys = {}, seenKeysByPrice = {};
+function buildSignalLine(itemName, label, kind, dateStr, timeStr, price, isStar, isRestored, apexDateTime, apexHeight, leftFlatRun, apexSharp, isPrettyTriangle) {
+    var key = itemName + "|" + label + "|" + kind + "|" + dateStr + "|" + timeStr + "|" + price.toFixed(2);
+    if (seenKeys[key]) { recordSuppressedDuplicate(itemName, label, kind, dateStr, timeStr, price, "EXACT_DUP", null, dateStr, timeStr); return null; }
+    var priceKey = itemName + "|" + label + "|" + kind + "|" + price.toFixed(2);
+    var thisEpoch = dateTimeToEpochApprox(String(dateStr), timeStr);
+    var seenList = seenKeysByPrice[priceKey];
+    if (seenList) {
+        for (var si = 0; si < seenList.length; si++) {
+            if (Math.abs(thisEpoch - seenList[si].epoch) <= DUP_SIGNAL_TIME_TOLERANCE_SEC) { recordSuppressedDuplicate(itemName, label, kind, dateStr, timeStr, price, "NEAR_DUP", Math.abs(thisEpoch - seenList[si].epoch), seenList[si].sdate, seenList[si].stime); return null; }
+        }
+    } else seenList = seenKeysByPrice[priceKey] = [];
+    seenList.push({ epoch: thisEpoch, sdate: dateStr, stime: timeStr });
+    seenKeys[key] = thisEpoch;
+    // [2026-08-18 재적용][왼쪽평탄 3단계 별표] 7번째 필드로 0/0.5/1을
+    // 실어서 대시보드가 별표를 몇 개(반개/한개) 붙일지 판단하게 한다.
+    // [2026-08-19 신규][철회복원] 8번째 필드로 1/0을 실어서, 이 신호가
+    // 예전에 철회됐다가 다시 검색돼 복원된 것인지 대시보드에 전달한다.
+    // [신규][2026-09-07][꼭지점봉 서버시간+높이] 9번째=꼭지점봉의 원본
+    // 서버시각("YYYYMMDD HH:MM:SS", 되짚기 전), 10번째=꼭지점 높이(pt).
+    // 대시보드 "가격시간" 칸이 이 값으로 달성/무효 판정기준이 실제로
+    // 어느 봉에서 어떤 높이로 형성됐는지 검증할 수 있게 한다.
+    // [신규][2026-09-10][목표삼각형 선행평탄구간/뾰족여부] 11번째=선행평탄구간
+    // (SB가 몇 봉째 안 바뀌었는지, 정수 봉수), 12번째=뾰족여부(1=뾰족/0=뭉툭).
+    // 대시보드 "목표삼각형 서버시간" 칸이 이 두 값을 9/10번째 필드(꼭지점봉
+    // 서버시각+높이)와 함께 묶어서 보여준다. 구버전 로그(이 필드 없음)는
+    // 대시보드가 "-"로 폴백 표시.
+    return itemName + "," + label + "," + kind + "," + dateStr + "," + timeStr + "," + price.toFixed(2) + "," + (isStar || 0) + "," + (isRestored ? "1" : "0") + "," + (apexDateTime || "") + "," + (apexHeight !== undefined && apexHeight !== null ? Number(apexHeight).toFixed(2) : "") + "," + (leftFlatRun !== undefined && leftFlatRun !== null ? Number(leftFlatRun) : "") + "," + (apexSharp === undefined || apexSharp === null ? "" : (apexSharp ? "1" : "0")) + "," + (isPrettyTriangle ? "1" : "0");
+}
+// [신규][2026-09-26][흰다이아몬드] calc.drainPretty2Events()가 꺼내준
+// 확정 이벤트를 신호파일에 남긴다 - 기존 신호줄(위 buildSignalLine)과는
+// 별개 kind(PRETTY2_CONFIRMED)라 registerPendingSignal 등 기존 신호처리
+// 파이프라인과 절대 안 섞인다. 형식:
+// item,tf,PRETTY2_CONFIRMED,sdate,stime,price,kind,confirmed(1/0),cases(예: "1|2", 파이프구분, 없으면 빈칸)
+// [수정][2026-09-26][v5.8] 9번째 필드로 어떤 케이스(1/2/3)가 통과했는지
+// 추가 - 구버전 로그(이 필드 없음)는 대시보드가 그냥 빈 배지설명으로 폴백.
+// [수정][2026-09-29][PRETTY2 중복기록 방지] 워밍업 재생은 매 순환마다 재조회 구간 전체를 다시
+// 돌려서 이미 기록한 과거 신호의 PRETTY2_CONFIRMED를 매번 다시 만들어냈다(파일/방송 폭증 원인).
+// 같은 신호키에 같은 내용(확정여부+케이스)이면 다시 쓰지 않고, 내용이 달라졌을 때만 다시 쓴다.
+// 기록 키는 신호 날짜 기준 DEDUP_RETENTION_SEC(7일)이 지나면 pruneDedupStructures가 정리한다.
+var pretty2Written = {}; // key -> { v: "확정|케이스", epoch }
+function writePretty2Events(itemName, fileLabel, events) {
+    if (!events || events.length === 0) return;
+    var lines = [];
+    events.forEach(function (ev) {
+        var val = (ev.confirmed ? "1" : "0") + "|" + (ev.cases && ev.cases.length ? ev.cases.join("|") : "");
+        var key = itemName + "|" + fileLabel + "|" + ev.kind + "|" + ev.sdate + "|" + ev.stime + "|" + Number(ev.price).toFixed(2);
+        var prev = pretty2Written[key];
+        if (prev && prev.v === val) return; // 이미 같은 내용을 기록함
+        pretty2Written[key] = { v: val, epoch: dateTimeToEpochApprox(String(ev.sdate), ev.stime) };
+        lines.push(itemName + "," + fileLabel + ",PRETTY2_CONFIRMED," + ev.sdate + "," + ev.stime + "," + Number(ev.price).toFixed(2) + "," + ev.kind + "," + (ev.confirmed ? "1" : "0") + "," + (ev.cases && ev.cases.length ? ev.cases.join("|") : ""));
+    });
+    writeLinesToFile(lines);
+}
+var recentResolutions = {};
+function recordResolution(tf, kind, sdate, stime, price, statusLabel, whenStr) { recentResolutions[tf + "|" + kind + "|" + sdate + "|" + stime + "|" + Number(price).toFixed(2)] = { status: statusLabel, when: whenStr, epoch: dateTimeToEpochApprox(String(sdate), stime) }; }
+var orphanedSignalDetails = {};
+function recordSuppressedDuplicate(itemName, label, kind, dateStr, timeStr, price, dupType, gapSec, originalSdate, originalStime) {
+    var survivor = findPendingMatch(itemName, label, kind, dateStr, timeStr, price);
+    var entry = { type: dupType, sdate: dateStr, stime: timeStr, price: price, gapSec: (gapSec !== null && gapSec !== undefined) ? gapSec : null };
+    if (survivor) {
+        if (!survivor.duplicatesSuppressed) survivor.duplicatesSuppressed = [];
+        var alreadyExists = survivor.duplicatesSuppressed.some(function (d) {
+            return d.type === entry.type && d.sdate === entry.sdate && d.stime === entry.stime && Math.abs(d.price - entry.price) < 0.005;
+        });
+        if (!alreadyExists) survivor.duplicatesSuppressed.push(entry);
+        pendingStateDirty = true;
+    }
+    else {
+        var pk = label + "|" + kind + "|" + dateStr + "|" + timeStr + "|" + price.toFixed(2);
+        var origSdate = originalSdate || dateStr, origStime = originalStime || timeStr;
+        var res = recentResolutions[label + "|" + kind + "|" + origSdate + "|" + origStime + "|" + Number(price).toFixed(2)];
+        var detailText = res ? ("SUPPRESSED_" + dupType + "_ORIGINAL(" + origSdate + " " + origStime + ")_ALREADY_" + res.status).replace(/,/g, ";") : ("SUPPRESSED_" + dupType + "_ORIGINAL(" + origSdate + " " + origStime + ")_NOT_FOUND").replace(/,/g, ";");
+        orphanedSignalDetails[pk] = { detail: detailText, epoch: dateTimeToEpochApprox(String(dateStr), timeStr) };
+        pendingStateDirty = true;
+    }
+}
+var lastSeenRealTime = {};
+function isNearDuplicateRealtime(itemName, label, kind, price, barCountAtSignal) {
+    var cycleKey = itemName + "|" + label + "|" + kind + "|" + price.toFixed(2);
+    var lastEntry = lastSeenRealTime[cycleKey];
+    var lastBarCount = lastEntry ? lastEntry.barCount : undefined;
+    if (lastBarCount !== undefined && barCountAtSignal - lastBarCount < 1) return true;
+    lastSeenRealTime[cycleKey] = { barCount: barCountAtSignal, epoch: lastTickEpoch || Math.floor(Date.now() / 1000) };
+    return false;
+}
+function pruneDedupStructures() {
+    if (lastTickEpoch === null) return;
+    var cutoff = lastTickEpoch - DEDUP_RETENTION_SEC;
+    Object.keys(pretty2Written).forEach(function (k) { if (pretty2Written[k].epoch < cutoff) delete pretty2Written[k]; });
+    var _pkSet = {}; pendingSignals.forEach(function (s) { _pkSet[pkOf(s)] = true; });
+    var removedSeenKeys = 0, removedPriceEntries = 0, removedPriceKeys = 0, removedResolutions = 0, removedOrphaned = 0, removedRealtime = 0;
+    Object.keys(seenKeys).forEach(function (k) { if (seenKeys[k] < cutoff) { delete seenKeys[k]; removedSeenKeys++; } });
+    Object.keys(seenKeysByPrice).forEach(function (pk) {
+        var list = seenKeysByPrice[pk];
+        var kept = list.filter(function (entry) { return entry.epoch >= cutoff; });
+        removedPriceEntries += (list.length - kept.length);
+        if (kept.length === 0) { delete seenKeysByPrice[pk]; removedPriceKeys++; } else seenKeysByPrice[pk] = kept;
+    });
+    Object.keys(recentResolutions).forEach(function (k) { if (recentResolutions[k].epoch < cutoff) { delete recentResolutions[k]; removedResolutions++; } });
+    Object.keys(orphanedSignalDetails).forEach(function (k) { if (orphanedSignalDetails[k].epoch < cutoff) { delete orphanedSignalDetails[k]; removedOrphaned++; } });
+    Object.keys(lastSeenRealTime).forEach(function (k) { if (lastSeenRealTime[k].epoch < cutoff) { delete lastSeenRealTime[k]; removedRealtime++; } });
+    if (removedSeenKeys || removedPriceEntries || removedPriceKeys || removedResolutions || removedOrphaned || removedRealtime) {
+        logDiagnostic("[DIAG][DEDUP_PRUNE] seenKeys=-" + removedSeenKeys + " priceEntries=-" + removedPriceEntries + " priceKeys=-" + removedPriceKeys + " resolutions=-" + removedResolutions + " orphaned=-" + removedOrphaned + " realtime=-" + removedRealtime);
+        pendingStateDirty = true;
+    }
+}
+
+var fileWriteBuffer = [], FILE_WRITE_BUFFER_MAX = 2000;
+function writeLinesToFile(lines) {
+    var allLines = fileWriteBuffer.concat(lines || []);
+    if (allLines.length === 0) return;
+    try { timedPrintOnFile(OUTPUT_FILE, allLines.join("\n") + "\n"); fileWriteBuffer = []; }
+    catch (e) { if (allLines.length > FILE_WRITE_BUFFER_MAX) allLines = allLines.slice(allLines.length - FILE_WRITE_BUFFER_MAX); fileWriteBuffer = allLines; }
+}
+
+function logPendingRemoval(sig, reasonCode, detail) {
+    try {
+        var whenStr = nowServerTimeStr();
+        pushStateHistory(sig, whenStr, "REMOVAL_LOG:" + reasonCode, sig.price);
+        var pk = sig.tf + "|" + sig.kind + "|" + sig.sdate + "|" + sig.stime + "|" + Number(sig.price).toFixed(2);
+        var safeDetail = (detail || "").toString().replace(/,/g, ";").replace(/\n/g, " ");
+        var line = sig.itemName + "," + sig.tf + ",REMOVAL_LOG," + sig.sdate + "," + sig.stime + "," + Number(sig.price).toFixed(2) + "," + reasonCode + "," + pk + "," + safeDetail;
+        // [2026-08-17 수정][신뢰성 근본수정] 예전엔 timedPrintOnFile을 직접
+        // 호출하고 실패를 통째로 삼켜서(catch(e){}), 쓰기 한 번만 실패해도
+        // 이 감사로그(REMOVAL_LOG) 줄이 재시도 없이 영구 유실됐다. 이게
+        // 대시보드에서 "제외" 사유가 하나도 안 남는 케이스의 원인이었다.
+        // 다른 신호 기록들과 동일하게 writeLinesToFile의 재시도 버퍼를
+        // 그대로 써서, 실패해도 다음 쓰기 시점에 반드시 다시 시도되게 한다.
+        writeLinesToFile([line]);
+    } catch (e) {}
+}
+
+function SlidingExtreme(size, mode) { this.size = size; this.mode = mode; this.buf = []; this.idx = 0; }
+SlidingExtreme.prototype.push = function (val) {
+    var i = this.idx++;
+    var better = (this.mode === 'max') ? function (a, b) { return a <= b; } : function (a, b) { return a >= b; };
+    while (this.buf.length && better(this.buf[this.buf.length - 1].v, val)) this.buf.pop();
+    this.buf.push({ v: val, i: i });
+    while (this.buf.length && this.buf[0].i <= i - this.size) this.buf.shift();
+    return this.buf[0].v;
+};
+function evalSignal(sa, sb) {
+    // [검색범위 원본유지, 별표만 추가] BULL/BEAR 판정조건은 안 건드림(기존과 100%동일)
+    //   - 신호가 잡혔을때만 SB가 왼쪽으로 몇봉 더 평평한지 재서 3단계 star(0/0.5/1) 추가.
+    //   검색여부엔 영향없고 표시(대시보드 별표)용.
+    var flat1 = sb.length > 2 && sb[2] === sb[1] && sb[1] === sb[0];
+    var flat2 = sb.length > 3 && sb[3] === sb[2] && flat1;
+    var b1 = false, b2 = false, s1 = false, s2 = false;
+    function starLevelFromRun(lf) { if (lf >= 10) return 1; if (lf >= 5) return 0.5; return 0; }
+    var b1Star = 0, b2Star = 0, s1Star = 0, s2Star = 0;
+    // [긴급 재수정][2026-09-07][되짚기(lf) 계산 자체의 설계결함 - 실행
+    // 검증+원본 대조로 확정] 예전엔 "SB(52봉 롤링 고가/저가 평균)가 몇
+    // 봉째 안 바뀌었는지"(sb[i]===sb[0])를 되짚기 거리로 썼는데, 이건
+    // "크로스가 실제로 반복 감지되는 기간"과 다른 것이다 - SB는 52봉
+    // 롤링 극값이 안 바뀌기만 하면 계속 같은 값을 유지하고, 이 기간은
+    // 실제 크로스(SA가 SB를 넘었다 내려오는 사건)가 딱 한 번만 있었어도
+    // 수십 봉까지 늘어날 수 있다. 그 결과 등록시각이 진짜 크로스 완성
+    // 시점보다 훨씬 더 과거로(실제사례: 24분/16봉 이상) 잘못 되짚혀지는
+    // 버그가 원본(백데이팅 없음) 대조 실행테스트로 확정됐다. 이제
+    // "SB가 안 바뀐 기간"이 아니라 "같은 크로스 패턴 자체가 한 칸씩
+    // 밀린 위치에서도 반복 성립하는지"(sa[k+2]<=sb[k+2] && sa[k+1]>sb[k+1]
+    // && sa[k]<=sb[k])를 매 offset마다 실제로 재검사해서, 그 조건이
+    // 실제로 유지되는 가장 먼 지점까지만 되짚는다. 크로스가 진짜 1회성
+    // 사건이면 lf=0에 가깝게(원본과 동일 시각) 나오고, 진짜 반복되는
+    // 경우에만(원래 되짚기를 만든 목적) 그만큼 되짚는다.
+    var lf1 = 0, lf2 = 0;
+    // [2026-09-10][MAX_LF_BACKDATE_BARS 캡 제거] 한때 여기에 되짚기 깊이
+    // 상한(10봉)을 걸었었는데, 이건 "실제 증상(신호가 엉뚱한 타임프레임
+    // 라벨로 등록됨)"과 무관한 이론(SB평탄+SA노이즈로 lf가 폭주한다는
+    // 추측)에 근거한 것이었고, 그 추측 자체가 틀렸음이 이후 확인됨(진짜
+    // 원인은 Main_OnRcvChartEx의 지각응답 오귀속 - 그건 별도로 근본수정
+    // 했음). 근거 없이 계산 로직 자체를 바꾸는 땜빵이라 판단해 제거하고
+    // 09-07 원본(되짚기 자체엔 인위적 상한 없음)으로 되돌림.
+    // [왼쪽평탄구간]+[오른쪽평탄구간] flat1 = 최근 3봉 SB 동일(왼쪽 기준봉 sb[2], 삼각형 sb[1], 오른쪽 기준봉 sb[0]). flat2 = 4봉(삼각형 폭2).
+    // [삼각형] 폭1: sa[1]만 SB 위(sa[2],sa[0]는 SB 이하). 폭2: sa[2],sa[1]이 SB 위(sa[3],sa[0]는 SB 이하).
+    // [등록시점] 기본신호는 오른쪽 기준봉(sa[0]<=sb[0])이 확정되는 봉에서 등록된다.
+    if (flat1 && sa.length > 2) {
+        b1 = sa[2] <= sb[2] && sa[1] > sb[1] && sa[0] <= sb[0];
+        s1 = sa[2] >= sb[2] && sa[1] < sb[1] && sa[0] >= sb[0];
+        if (b1 || s1) {
+            var k1 = 1;
+            while (k1 + 2 < sb.length) {
+                var holds1 = b1 ? (sa[k1 + 2] <= sb[k1 + 2] && sa[k1 + 1] > sb[k1 + 1] && sa[k1] <= sb[k1])
+                                : (sa[k1 + 2] >= sb[k1 + 2] && sa[k1 + 1] < sb[k1 + 1] && sa[k1] >= sb[k1]);
+                if (!holds1) break;
+                lf1++; k1++;
+            }
+            // [복구][2026-09-08][별표 표시는 되짚기(lf)와 완전히 별개 계산으로
+            // 분리] 되짚기(lf1) 계산을 "크로스패턴 반복성립" 기준으로 고치면서,
+            // 같은 lf1을 재사용하던 별표(왼쪽평탄구간 표시)까지 같이 죽어버린
+            // 문제가 실제사례로 확인됨(SB불변기간은 크로스반복기간보다 훨씬
+            // 흔해서, 대부분의 별표가 안 뜨게 됨). 별표는 원래 목적대로
+            // "SB가 몇 봉째 안 바뀌었는지"(flatRun1)를 되짚기와 무관하게
+            // 독립적으로 다시 계산한다 - 되짚기(lf1, 등록시각/게이트용)와
+            // 별표(flatRun1, 표시전용)는 이제 서로 전혀 영향을 안 준다.
+            // [왼쪽평탄구간] flatRun = 왼쪽 기준봉부터 SB가 같은 봉수(보라/흰색 배지 판정과 별표에 사용)
+            var flatRun1 = 0, fi1 = 2;
+            while (fi1 < sb.length && sb[fi1] === sb[0]) { flatRun1++; fi1++; }
+            if (b1) b1Star = starLevelFromRun(flatRun1);
+            if (s1) s1Star = starLevelFromRun(flatRun1);
+        }
+    }
+    if (flat2 && sa.length > 3) {
+        b2 = sa[3] <= sb[3] && sa[2] > sb[2] && sa[1] > sb[1] && sa[0] <= sb[0];
+        s2 = sa[3] >= sb[3] && sa[2] < sb[2] && sa[1] < sb[1] && sa[0] >= sb[0];
+        if (b2 || s2) {
+            var k2 = 1;
+            while (k2 + 3 < sb.length) {
+                var holds2 = b2 ? (sa[k2 + 3] <= sb[k2 + 3] && sa[k2 + 2] > sb[k2 + 2] && sa[k2 + 1] > sb[k2 + 1] && sa[k2] <= sb[k2])
+                                : (sa[k2 + 3] >= sb[k2 + 3] && sa[k2 + 2] < sb[k2 + 2] && sa[k2 + 1] < sb[k2 + 1] && sa[k2] >= sb[k2]);
+                if (!holds2) break;
+                lf2++; k2++;
+            }
+            // [복구][2026-09-08] 별표는 flatRun2(SB불변기간)로 독립 계산.
+            var flatRun2 = 0, fi2 = 3;
+            while (fi2 < sb.length && sb[fi2] === sb[0]) { flatRun2++; fi2++; }
+            if (b2) b2Star = starLevelFromRun(flatRun2);
+            if (s2) s2Star = starLevelFromRun(flatRun2);
+        }
+    }
+    // [신규][2026-09-10][목표삼각형 선행평탄구간 표시용] flatRun1/flatRun2는
+    // 위에서 이미 별표(star) 계산에 쓰던 "SB가 몇 봉째 안 바뀌었는지" 원시
+    // 봉수값이다 - 대시보드가 별표(0/0.5/1 3단계)보다 더 구체적인 실제
+    // 봉수를 "선행평탄구간"으로 보여줄 수 있게 그대로 반환값에 실어보낸다.
+    // b1/s1이 모두 false면 flatRun1은 계산 자체가 안 돌아 undefined인 채로
+    // 반환되지만, 호출부(onBar)는 st.b1/st.s1이 true일 때만 이 값을 쓴다.
+    return { b1: b1, b2: b2, s1: s1, s2: s2, b1Star: b1Star, b2Star: b2Star, s1Star: s1Star, s2Star: s2Star, lf1: lf1, lf2: lf2, flatRun1: flatRun1, flatRun2: flatRun2 };
+}
+// [신규][2026-09-10][목표삼각형 뾰족여부 판정기준] 폭2(BULL2/BEAR2) 신호는
+// 후보 꼭지점이 index1/index2 둘이라, 더 높은 쪽을 "진짜 꼭지점"으로 쓴다
+// (기존 로직 그대로). 그런데 두 후보 높이가 서로 비슷하면 실제로는 뾰족한
+// 한 지점이 아니라 두 봉짜리 뭉툭한 고원(plateau)에 가깝다 - 두 후보 높이
+// 차이가 (더 높은 쪽 대비) 이 비율 이상 벌어져야 "뾰족"으로 표시한다.
+// 폭1(BULL1/BEAR1)은 후보가 하나뿐이라 항상 뾰족으로 취급.
+var APEX_SHARP_HEIGHT_RATIO = 0.15;
+// [신규][v4.5][예쁜삼각형(다이아몬드 배지) 판정 - GOLD 최신본에서 이식]
+// 기존 Bear_1/2/3·Bull_1/2/3(계곡패턴) 조건은 이미 evalSignal이 판정한다.
+// 여기서는 그 위에 "더 확실한 모양"만 추가로 가려내는 보조검사다:
+// (1)골(계곡)이 충분히 뾰족한지(펑퍼짐 걸러냄) (2)그 직전에 이미 반대편
+// 언덕/골짜기가 있었는지(빈약한 이전구름 걸러냄) (3)회복 직후 구름이
+// 계속 벌어지는 방향인지. saHist/sbHist는 index0=현재봉, index1=1봉전...
+// 순서라(unshift로 쌓임) 사용자가 준 수식의 SA(N)/SB(N) 표기와 그대로
+// 대응된다. isBull=true면 Bull(선행스팬A가 평탄, SB가 위에서 찌르고
+// 회복), false면 Bear(선행스팬B가 평탄, SA가 아래서 찌르고 회복).
+function computeAtrFromHist(saHist) {
+    var atr = 0;
+    for (var i = 0; i < 14 && i < saHist.length - 1; i++) atr += Math.abs(saHist[i] - saHist[i + 1]);
+    return Math.max(atr / 14, 0.0001);
+}
+function checkPrettyTriangle(saHist, sbHist, isBull) {
+    if (saHist.length < 8 || sbHist.length < 8) return false;
+    var atr = computeAtrFromHist(saHist);
+    var threshold = atr * PRETTY_TRIANGLE_RATIO;
+    if (!isBull) {
+        // Bear: 골 깊이(SB - 최근3봉 중 SA 최저치), 이전언덕(SA가 SB보다 위였던 5~7봉전)
+        var golDepth = sbHist[0] - Math.min(saHist[0], saHist[1], saHist[2]);
+        var prevHill = (saHist[5] > sbHist[5]) || (saHist[6] > sbHist[6]) || (saHist[7] > sbHist[7]);
+        var expanding = (saHist[0] - sbHist[0]) > (saHist[1] - sbHist[1]);
+        return golDepth >= threshold && prevHill && expanding;
+    } else {
+        // Bull: 골 깊이(최근3봉 중 SB 최고치 - SA), 이전골짜기(SB가 SA보다 아래였던 5~7봉전)
+        var golDepthBull = Math.max(sbHist[0], sbHist[1], sbHist[2]) - saHist[0];
+        var prevValley = (sbHist[5] < saHist[5]) || (sbHist[6] < saHist[6]) || (sbHist[7] < saHist[7]);
+        var expandingBull = (saHist[0] - sbHist[0]) > (saHist[1] - sbHist[1]);
+        return golDepthBull >= threshold && prevValley && expandingBull;
+    }
+}
+var PRETTY_TRIANGLE_RATIO = 0.15; // 실측하며 조절할 값(높을수록 더 뾰족한 것만 통과)
+// [신규][2026-09-26][흰다이아몬드 배지 - 오른쪽 구름대 확인] 기존
+// 다이아몬드(checkPrettyTriangle)는 그대로 두고, "삼각형 완성 후 반대편에도
+// 구름대가 형성되는지" 추가 배지 - 새 스캔/새 차트요청 없이 이미 매 봉마다
+// 호출되는 이 SignalCalculator.onBar()의 saHist/sbHist 누적을 재사용해서
+// "꼭짓점 이후 N봉이 쌓일 때까지 기다렸다가 그 구간 구름대 두께가
+// 유지되는지"만 사후 확인한다(신규 신호검색 기준 아님).
+var PRETTY_TRIANGLE2_LOOKAHEAD_BARS = 8; // checkPrettyTriangle의 왼쪽 8봉 대칭
+// [수정][2026-09-26][v5.8 - 오른쪽 구름대 판정을 독립된 케이스들로 분리]
+// 사용자 지적: 얇아도 평탄구간이 넓고 삼각형이 예쁘면(=기존 다이아몬드를
+// 이미 통과) 상관없는데 v5.7의 "평균 threshold 미달"이 이런 경우까지
+// 탈락시킴 - 그리고 실제 차트엔 넓은 평탄구간 안에서 잠깐 한 번
+// 아래로/위로 삐끗(V자)했다가 회복하는 형태도 있음. 사용자 결정: 여러
+// 기준을 하나로 합치지 말고 "케이스"로 서로 완전히 독립시켜서, 나중에
+// 특정 케이스만 골라 끄거나 되돌릴 수 있게 하고, 통과한 케이스 번호를
+// 그대로 기록해 배지 마우스오버에 "몇 번 케이스로 통과했는지" 보여준다
+// (중복 통과시 "1,2"처럼 여러 개). 각 케이스는 서로를 몰라도 되는 순수
+// 함수 - 하나를 고치거나 빼도 나머지에 영향 없음.
+function checkRightCloudCase1_ThickAverage(saHist, sbHist, isBull) {
+    // 케이스1(두께평균 - 가장 엄격/확실): 한 봉이라도 두께가 0 이하(구름
+    // 소멸/역전)면 무조건 탈락(하드 플로어), 나머지는 N봉 평균 두께가
+    // threshold 이상이면 통과 - v5.7 로직 그대로, 케이스1로 이름만 분리.
+    if (saHist.length < PRETTY_TRIANGLE2_LOOKAHEAD_BARS || sbHist.length < PRETTY_TRIANGLE2_LOOKAHEAD_BARS) return false;
+    var atr = computeAtrFromHist(saHist);
+    var threshold = atr * PRETTY_TRIANGLE_RATIO;
+    var sumThickness = 0;
+    for (var i = 0; i < PRETTY_TRIANGLE2_LOOKAHEAD_BARS; i++) {
+        var thickness = isBull ? (sbHist[i] - saHist[i]) : (saHist[i] - sbHist[i]);
+        if (thickness <= 0) return false;
+        sumThickness += thickness;
+    }
+    return (sumThickness / PRETTY_TRIANGLE2_LOOKAHEAD_BARS) >= threshold;
+}
+function checkRightCloudCase2_ThinButPresent(saHist, sbHist, isBull) {
+    // 케이스2(얇아도 유지): 두께 크기(threshold)는 아예 안 보고, N봉 내내
+    // 단 한 번도 역전/소멸하지 않았는지만 확인 - 케이스1보다 완화된 조건
+    // (케이스1을 통과하면 이 케이스도 항상 자동으로 통과하는 상위개념).
+    if (saHist.length < PRETTY_TRIANGLE2_LOOKAHEAD_BARS || sbHist.length < PRETTY_TRIANGLE2_LOOKAHEAD_BARS) return false;
+    for (var i = 0; i < PRETTY_TRIANGLE2_LOOKAHEAD_BARS; i++) {
+        var thickness = isBull ? (sbHist[i] - saHist[i]) : (saHist[i] - sbHist[i]);
+        if (thickness <= 0) return false;
+    }
+    return true;
+}
+var PRETTY_TRIANGLE2_DIP_TOLERANCE_BARS = 2; // N=8봉 중 최대 허용 역전/소멸 봉수(실측하며 조절할 값)
+function checkRightCloudCase3_BriefDipTolerant(saHist, sbHist, isBull) {
+    // 케이스3(짧은 V자 역전 허용): N봉 중 최대 DIP_TOLERANCE개 봉까지는
+    // 역전/소멸돼도 되고, 나머지(절대다수)만 정상 방향이면 통과 - 넓은
+    // 평탄구간 안에서 잠깐 한 번 삐끗했다 회복하는 형태까지 인식(케이스2를
+    // 통과하면 이 케이스도 항상 자동으로 통과하는 상위개념).
+    if (saHist.length < PRETTY_TRIANGLE2_LOOKAHEAD_BARS || sbHist.length < PRETTY_TRIANGLE2_LOOKAHEAD_BARS) return false;
+    var invertedCount = 0;
+    for (var i = 0; i < PRETTY_TRIANGLE2_LOOKAHEAD_BARS; i++) {
+        var thickness = isBull ? (sbHist[i] - saHist[i]) : (saHist[i] - sbHist[i]);
+        if (thickness <= 0) invertedCount++;
+    }
+    return invertedCount <= PRETTY_TRIANGLE2_DIP_TOLERANCE_BARS;
+}
+// 세 케이스를 서로 독립적으로 평가해 통과한 케이스 번호만 모아 반환 -
+// 어느 하나라도 통과하면 흰다이아몬드 확정(matched=true). cases 배열은
+// 그대로 신호파일/대시보드까지 실어보내 배지 마우스오버에 표시한다.
+function evalRightCloudCases(saHist, sbHist, isBull) {
+    var cases = [];
+    if (checkRightCloudCase1_ThickAverage(saHist, sbHist, isBull)) cases.push(1);
+    if (checkRightCloudCase2_ThinButPresent(saHist, sbHist, isBull)) cases.push(2);
+    if (checkRightCloudCase3_BriefDipTolerant(saHist, sbHist, isBull)) cases.push(3);
+    return { matched: cases.length > 0, cases: cases };
+}
+// ================================================================================
+// [신규][2026-10-01][v5.23 실시간 틱봉 빌더 이어받기] 실측(골드 30틱, 630틱): 실시간 틱(updateID 20001)으로 만든 30틱봉 20개가 차트 봉과 20/20 연속 일치했고,
+// 차트 틱봉의 시각은 "봉의 첫 틱 시각"이었다. 그래서 (1)최근 틱을 링버퍼에 기록해 두고 (2)워밍업 응답 때 차트의 마지막 완결봉(시각+고저가가 같은
+// 틱 구간)을 버퍼에서 찾아 봉 경계를 맞추고 (3)그 뒤 형성 중인 봉의 틱을 새 실시간 빌더에 이어받게 한다. 못 찾으면(버퍼 부족/불일치) 예전처럼 빈 빌더로 시작한다.
+// 빌더가 만드는 봉의 시각도 차트 기준(첫 틱 시각)으로 맞춘다. LIVE_SEED_ENABLED=false / LIVE_TICKBAR_TIME_FIRST_TICK=false 로 각각 예전 방식으로 복원된다.
+// ================================================================================
+var LIVE_TICKBAR_TIME_FIRST_TICK = true; // false = 봉 시각을 마지막 틱 시각으로(v5.22 이전 방식)
+function TickBarBuilder(nTicks) { this.n = nTicks; this.count = 0; this.high = null; this.low = null; this.lastSdate = null; this.lastStime = null; this.firstSdate = null; this.firstStime = null; }
+TickBarBuilder.prototype.onTick = function (price, sdate, stime) {
+    if (this.count === 0) { this.high = price; this.low = price; this.firstSdate = sdate; this.firstStime = stime; } else { this.high = Math.max(this.high, price); this.low = Math.min(this.low, price); }
+    this.lastSdate = sdate; this.lastStime = stime; this.count++;
+    if (this.count >= this.n) {
+        var bar = LIVE_TICKBAR_TIME_FIRST_TICK ? { high: this.high, low: this.low, sdate: this.firstSdate, stime: this.firstStime } : { high: this.high, low: this.low, sdate: this.lastSdate, stime: this.lastStime };
+        this.count = 0; this.high = null; this.low = null; return bar;
+    }
+    return null;
+};
+
+// ================================================================================
+// [신규][2026-10-01][v5.21 다이아몬드(보라/흰색) 기준 개편] 사용자 설계:
+//  - 신호 구조: 평탄한 SB 위에서 SA가 삼각형으로 솟는 모양이고, 삼각형 양옆에는 삼각형과 "반대색" 구름(BULL이면 SA<SB, BEAR면 SA>SB)이 있다.
+//    (삼각형 색이 구름과 반대인 것은 신호 자체이므로 제외 사유가 아님. 구름이 삼각형 앞뒤로 바로 뒤집히는 유형은 보류)
+//  - 보라 💎 = 즉시성: 삼각형 완성 봉에서 바로. 평탄 2봉 이상 + 뾰족한 삼각형 + 왼쪽 8봉 중 4봉 이상에 구름(두께 기준 없음).
+//  - 흰색 ◇ = 완성도(보라보다 높은 기준): 보라 통과 신호만 대상. 삼각형 뒤 8봉이 쌓인 시점에
+//    왼쪽 8봉 중 6봉 이상 구름 + 평균두께>=기준(신호 시점에 계산), 오른쪽 8봉 중 6봉 이상 구름 + 평균두께>=기준.
+//    두께 기준 = ATR(선행스팬A 14봉 평균변화) x PRETTY_TRIANGLE_RATIO(0.15).
+//  - 기존 기준(v5.20 이전: checkPrettyTriangle 골깊이/이전언덕/확장 + 흰색 케이스1/2/3)은 함수째 그대로 남겨뒀다.
+//    아래 DIAMOND_CRITERIA_LEGACY 를 true 로 바꾸면 기존 기준으로 복원된다.
+// ================================================================================
+var DIAMOND_CRITERIA_LEGACY = false;   // true = 기존(v5.20 이전) 보라/흰색 기준으로 복원
+var DIAMOND_MIN_FLAT_RUN = 2;          // 보라: 평탄구간 최소 봉수
+var DIAMOND_PURPLE_LEFT_MIN_BARS = 4;  // 보라: 왼쪽 8봉 중 구름이 있어야 하는 최소 봉수
+var DIAMOND_WHITE_MIN_FLAT_RUN = 3;    // [왼쪽평탄구간] 흰색: 왼쪽 평탄 최소 봉수 (SB 불변, 삼각형 왼쪽 기준봉 포함). 보라는 위 DIAMOND_MIN_FLAT_RUN=2
+var DIAMOND_WHITE_SIDE_MIN_BARS = 6;   // [왼쪽구름층] 흰색: 왼쪽 8봉 중 반대색 구름이 있어야 하는 최소 봉수 (두께는 보지 않음)
+var DIAMOND_WHITE_RIGHT_FLAT_BARS = 3; // [오른쪽평탄구간][오른쪽구름층][등록시점] 흰색: 삼각형 오른쪽 기준봉(신호봉)부터 세어 이 봉수 동안 SB 불변 + 매 봉 구름 유지.
+                                       //   이 봉수째 되는 봉에서 흰색 확정(=신호봉 뒤 N-1봉째). 3이면 신호 뒤 2봉째 등록. 값만 바꾸면 등록 시점도 같이 바뀐다.
+function diamondCloudThickness(sa, sb, i, isBull) { return isBull ? (sb[i] - sa[i]) : (sa[i] - sb[i]); } // 삼각형과 반대색 구름이면 양수
+function diamondSideStats(sa, sb, from, isBull) {
+    var n = PRETTY_TRIANGLE2_LOOKAHEAD_BARS, cnt = 0, sum = 0;
+    if (sa.length < from + n || sb.length < from + n) return { cnt: 0, avg: 0, enough: false };
+    for (var i = from; i < from + n; i++) {
+        var t = diamondCloudThickness(sa, sb, i, isBull);
+        if (t > 0) { cnt++; sum += t; }
+    }
+    return { cnt: cnt, avg: sum / n, enough: true };
+}
+// 보라: 삼각형 완성 시점. leftFrom = 삼각형 왼쪽 첫 봉 index(폭1 신호=2, 폭2 신호=3)
+function checkDiamondPurpleNew(sa, sb, isBull, leftFrom, flatRun, apexSharp) {
+    var out = { ok: false, leftStrict: false };
+    // [삼각형] 꼭짓점이 뾰족해야 함(apexSharp). 폭1은 항상 통과, 폭2는 두 봉 높이 차이가 APEX_SHARP_HEIGHT_RATIO 이상.
+    // [왼쪽평탄구간] 삼각형 왼쪽 SB 불변 봉수(flatRun, 왼쪽 기준봉 포함)가 DIAMOND_MIN_FLAT_RUN 이상.
+    // [오른쪽평탄구간] 삼각형 오른쪽 기준봉(최신봉)의 SB 동일은 기본신호(evalSignal flat1/flat2)가 이미 보장 - 보라는 여기서 따로 안 봄.
+    // [등록시점] 보라는 삼각형 완성(신호 발생) 즉시 등록.
+    if (!apexSharp || !(flatRun >= DIAMOND_MIN_FLAT_RUN)) return out;
+    // [왼쪽구름층] 왼쪽 8봉 중 반대색 구름이 DIAMOND_PURPLE_LEFT_MIN_BARS 봉 이상.
+    var left = diamondSideStats(sa, sb, leftFrom, isBull);
+    if (!left.enough || left.cnt < DIAMOND_PURPLE_LEFT_MIN_BARS) return out;
+    out.ok = true;
+    // 흰색의 왼쪽 조건(신호 시점에 미리 계산해 둠): [왼쪽평탄구간] 흰색 최소봉수 + [왼쪽구름층] 8봉 중 6봉 이상(두께 제외)
+    out.leftStrict = flatRun >= DIAMOND_WHITE_MIN_FLAT_RUN && left.cnt >= DIAMOND_WHITE_SIDE_MIN_BARS;
+    return out;
+}
+// 흰색: 신호봉(삼각형 오른쪽 기준봉)부터 DIAMOND_WHITE_RIGHT_FLAT_BARS 봉이 모인 시점에 호출된다(index 0 = 최신봉, N-1 = 신호봉).
+// leftStrict 는 보라 통과 시점에 계산한 값([왼쪽평탄구간]+[왼쪽구름층]).
+function evalDiamondWhiteNew(sa, sb, isBull, leftStrict) {
+    if (!leftStrict) return { matched: false, cases: [] };
+    var n = DIAMOND_WHITE_RIGHT_FLAT_BARS;
+    if (sa.length < n || sb.length < n) return { matched: false, cases: [] };
+    for (var i = 0; i < n; i++) {
+        // [오른쪽평탄구간] 오른쪽 n봉 모두 SB가 같아야 한다(SB가 바뀌면 흰색 아님).
+        if (sb[i] !== sb[0]) return { matched: false, cases: [] };
+        // [오른쪽구름층] 오른쪽 n봉 모두 반대색 구름이 있어야 한다(두께는 보지 않음).
+        if (!(diamondCloudThickness(sa, sb, i, isBull) > 0)) return { matched: false, cases: [] };
+    }
+    return { matched: true, cases: [4] }; // 케이스 4 = 신기준
+}
+function SignalCalculator() {
+    this.ex9h = new SlidingExtreme(9, 'max'); this.ex9l = new SlidingExtreme(9, 'min');
+    this.ex26h = new SlidingExtreme(26, 'max'); this.ex26l = new SlidingExtreme(26, 'min');
+    this.ex52h = new SlidingExtreme(52, 'max'); this.ex52l = new SlidingExtreme(52, 'min');
+    this.saHist = []; this.sbHist = []; this.barCount = 0;
+    // [근본수정][2026-09-04][같은 평탄구간=같은 신호] 각 봉의 실제 시각을
+    // saHist/sbHist와 같은 순서로 병행 저장 - 평탄구간이 왼쪽으로 몇
+    // 봉째까지 이어지는지(evalSignal의 lf) 알아낸 뒤, 그 봉의 실제
+    // sdate/stime을 신호의 "진짜 시작시각"으로 되짚어 쓸 수 있게 한다.
+    // 최대길이를 5->30으로 늘려 충분히 긴 평탄구간도 시작점까지 추적 가능.
+    this.sdateHist = []; this.stimeHist = [];
+    this.pendingPretty2 = []; this.pretty2Events = [];
+}
+SignalCalculator.prototype.drainPretty2Events = function () {
+    if (this.pretty2Events.length === 0) return [];
+    var out = this.pretty2Events;
+    this.pretty2Events = [];
+    return out;
+};
+SignalCalculator.prototype.onBar = function (high, low, sdate, stime) {
+    var h9 = this.ex9h.push(high), l9 = this.ex9l.push(low);
+    var h26 = this.ex26h.push(high), l26 = this.ex26l.push(low);
+    var h52 = this.ex52h.push(high), l52 = this.ex52l.push(low);
+    var tanki = (h9 + l9) / 2, jyunki = (h26 + l26) / 2;
+    var SA = (tanki + jyunki) / 2, SB = (h52 + l52) / 2;
+    // [신규][2026-09-14][진입 다음봉 재확인용] min봉 파일과 동일 - 이번 봉의 SA/SB를
+    // 인스턴스에 노출. 검색조건(b1/b2/s1/s2) 자체는 전혀 안 건드림.
+    this.lastSA = SA; this.lastSB = SB;
+    this.saHist.unshift(SA); if (this.saHist.length > 30) this.saHist.pop();
+    this.sbHist.unshift(SB); if (this.sbHist.length > 30) this.sbHist.pop();
+    this.sdateHist.unshift(sdate); if (this.sdateHist.length > 30) this.sdateHist.pop();
+    this.stimeHist.unshift(stime); if (this.stimeHist.length > 30) this.stimeHist.pop();
+    this.barCount++;
+    // [신규][2026-09-26][흰다이아몬드] 대기 중인 꼭짓점들을 한 봉씩 나이먹인다 -
+    // 이 saHist/sbHist는 신호검색과 완전히 동일한 배열이라 새 조회/새 순회가
+    // 전혀 필요 없다. N봉째 되는 바로 이 순간의 index 0..N-1이 정확히
+    // "꼭짓점 다음에 새로 쌓인 N개 봉"이다.
+    if (this.pendingPretty2.length > 0) {
+        for (var p2i = this.pendingPretty2.length - 1; p2i >= 0; p2i--) {
+            var pc = this.pendingPretty2[p2i];
+            pc.bars++;
+            // [등록시점] 흰색 확정 시점: 신기준=신호봉 뒤 (DIAMOND_WHITE_RIGHT_FLAT_BARS-1)봉째, 기존(LEGACY)=8봉째
+            if (pc.bars >= (DIAMOND_CRITERIA_LEGACY ? PRETTY_TRIANGLE2_LOOKAHEAD_BARS : DIAMOND_WHITE_RIGHT_FLAT_BARS - 1)) {
+                var rc = DIAMOND_CRITERIA_LEGACY ? evalRightCloudCases(this.saHist, this.sbHist, pc.isBull) : evalDiamondWhiteNew(this.saHist, this.sbHist, pc.isBull, pc.leftStrict); // [v5.21] 신기준(기존은 LEGACY 플래그로 복원)
+                this.pretty2Events.push({ sdate: pc.sdate, stime: pc.stime, price: pc.price, kind: pc.kind, confirmed: rc.matched, cases: rc.cases });
+                this.pendingPretty2.splice(p2i, 1);
+            }
+        }
+    }
+    var results = [];
+    if (this.barCount <= 51) return results;
+    var st = evalSignal(this.saHist, this.sbHist);
+    // [신규][2026-09-07][꼭지점봉 서버시간+높이] 달성/무효 판정의 실제
+    // 기준가(SB)가 확정된 "진짜 꼭지점봉"의 원본 서버시각과, 그 봉에서
+    // SA가 SB를 얼마나 넘어섰는지(꼭지점 높이)를 계산해 신호와 함께
+    // 내보낸다. sdate/stime(신호 등록시각)은 평탄구간 시작점까지
+    // 되짚지만, 꼭지점 자체는 되짚지 않는다 - 폭1은 index1(유일한
+    // 교차점), 폭2는 index1/index2 중 더 높은 쪽을 진짜 꼭지점으로 삼는다.
+    if (st.b1 || st.b2) {
+        var lfB = st.b2 ? st.lf2 : st.lf1;
+        var originIdxB = Math.min(lfB, this.sdateHist.length - 1);
+        var apexIdxB = 1, apexHeightB = this.saHist[1] - this.sbHist[1];
+        var apexSharpB = true; // [신규][2026-09-10] 폭1은 항상 뾰족
+        if (st.b2) {
+            var apexH2B = this.saHist[2] - this.sbHist[2];
+            var maxHB = Math.max(apexHeightB, apexH2B, 0.0001);
+            apexSharpB = (Math.abs(apexHeightB - apexH2B) / maxHB) >= APEX_SHARP_HEIGHT_RATIO;
+            if (apexH2B > apexHeightB) { apexIdxB = 2; apexHeightB = apexH2B; }
+        }
+        var dB = DIAMOND_CRITERIA_LEGACY ? null : checkDiamondPurpleNew(this.saHist, this.sbHist, true, st.b2 ? 3 : 2, st.b2 ? st.flatRun2 : st.flatRun1, apexSharpB);
+        var isPrettyB = DIAMOND_CRITERIA_LEGACY ? checkPrettyTriangle(this.saHist, this.sbHist, true) : dB.ok; // [v5.21] 기존 기준은 LEGACY 플래그로 복원
+        var writeSdateB = this.sdateHist[originIdxB] || sdate, writeStimeB = this.stimeHist[originIdxB] || stime, kindB = st.b2 ? 'BULL2' : 'BULL1';
+        results.push({ sdate: writeSdateB, stime: writeStimeB, price: SB, kind: kindB, leftFlatStar: st.b2 ? st.b2Star : st.b1Star,
+            apexSdate: this.sdateHist[apexIdxB] || sdate || "", apexStime: this.stimeHist[apexIdxB] || stime || "", apexHeight: apexHeightB, trueSdate: sdate, trueStime: stime,
+            leftFlatRun: st.b2 ? st.flatRun2 : st.flatRun1, apexSharp: apexSharpB, isPrettyTriangle: isPrettyB }); // [신규][2026-09-10][목표삼각형 표시용]
+        if (isPrettyB) this.pendingPretty2.push({ bars: 0, isBull: true, sdate: writeSdateB, stime: writeStimeB, price: SB, kind: kindB, leftStrict: dB ? dB.leftStrict : false });
+    }
+    if (st.s1 || st.s2) {
+        var lfS = st.s2 ? st.lf2 : st.lf1;
+        var originIdxS = Math.min(lfS, this.sdateHist.length - 1);
+        var apexIdxS = 1, apexHeightS = this.sbHist[1] - this.saHist[1];
+        var apexSharpS = true; // [신규][2026-09-10] 폭1은 항상 뾰족
+        if (st.s2) {
+            var apexH2S = this.sbHist[2] - this.saHist[2];
+            var maxHS = Math.max(apexHeightS, apexH2S, 0.0001);
+            apexSharpS = (Math.abs(apexHeightS - apexH2S) / maxHS) >= APEX_SHARP_HEIGHT_RATIO;
+            if (apexH2S > apexHeightS) { apexIdxS = 2; apexHeightS = apexH2S; }
+        }
+        var dS = DIAMOND_CRITERIA_LEGACY ? null : checkDiamondPurpleNew(this.saHist, this.sbHist, false, st.s2 ? 3 : 2, st.s2 ? st.flatRun2 : st.flatRun1, apexSharpS);
+        var isPrettyS = DIAMOND_CRITERIA_LEGACY ? checkPrettyTriangle(this.saHist, this.sbHist, false) : dS.ok; // [v5.21] 기존 기준은 LEGACY 플래그로 복원
+        var writeSdateS = this.sdateHist[originIdxS] || sdate, writeStimeS = this.stimeHist[originIdxS] || stime, kindS = st.s2 ? 'BEAR2' : 'BEAR1';
+        results.push({ sdate: writeSdateS, stime: writeStimeS, price: SB, kind: kindS, leftFlatStar: st.s2 ? st.s2Star : st.s1Star,
+            apexSdate: this.sdateHist[apexIdxS] || sdate || "", apexStime: this.stimeHist[apexIdxS] || stime || "", apexHeight: apexHeightS, trueSdate: sdate, trueStime: stime,
+            leftFlatRun: st.s2 ? st.flatRun2 : st.flatRun1, apexSharp: apexSharpS, isPrettyTriangle: isPrettyS }); // [신규][2026-09-10][목표삼각형 표시용]
+        if (isPrettyS) this.pendingPretty2.push({ bars: 0, isBull: false, sdate: writeSdateS, stime: writeStimeS, price: SB, kind: kindS, leftStrict: dS ? dS.leftStrict : false });
+    }
+    return results;
+};
+
+function msToDateTimeStr(ms) {
+    var d = new Date(ms), pad = function (n) { return ("0" + n).slice(-2); };
+    return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + " " + pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds());
+}
+function formatTime(rawTime) { var s = ("000000" + Math.floor(rawTime / 10000)).slice(-6); return s.slice(0, 2) + ":" + s.slice(2, 4) + ":" + s.slice(4, 6); }
+function parseDateField(rawDate) { if (!rawDate || rawDate === 0) { var now = new Date(); return now.getFullYear() + ("0" + (now.getMonth() + 1)).slice(-2) + ("0" + now.getDate()).slice(-2); } return String(rawDate); }
+function parseTimeField(rawTime) { if (rawTime === null || rawTime === undefined) return null; var n = Number(rawTime); if (n > 240000) n = Math.floor(n / 10000); var s = ("000000" + n).slice(-6); return s.slice(0, 2) + ":" + s.slice(2, 4) + ":" + s.slice(4, 6); }
+function nowServerTimeStr() {
+    // [근본수정][2026-09-07][marketDataObj 기반 시각이 미래로 튀는 문제]
+    // 예전엔 marketDataObj.date/.time(예스트레이더 실시간시세 필드)을
+    // 파싱해서 썼는데, 이 값의 정확한 포맷을 확신할 수 없었고 실제로
+    // "저장예약/저장확정이 다음날로, REMOVAL_LOG 사유가 몇 시간 미래로
+    // 찍히는" 현상이 재현됐다(2안/2+1안과 동일 지적사항). PC의 시스템
+    // 시계(Date.now())는 이 문제가 없지만, PC의 시간대 설정이 KST일 수
+    // 있어(예스트레이더가 한국에서 실행되는 경우 흔함) - 대시보드는 이
+    // 값을 "CT(시카고)"로 간주하고 KST로 재변환하므로, PC 로컬시계를
+    // 그대로 쓰면 이미 KST인 값에 또 KST변환을 얹는 이중오류가 생긴다.
+    // UTC 기준시각에서 미국 서머타임 규칙(3월 둘째주 일요일~11월 첫째주
+    // 일요일은 CDT=UTC-5, 그 외 CST=UTC-6)을 직접 계산해서 적용, PC의
+    // 시간대 설정과 무관하게 항상 정확한 시카고(CT) 현재시각을 반환하도록
+    // 근본적으로 재설계했다(2안/2+1안과 동일 로직).
+    var nowUtc = new Date();
+    var year = nowUtc.getUTCFullYear();
+    var marchFirst = new Date(Date.UTC(year, 2, 1));
+    var secondSundayMarch = 1 + ((7 - marchFirst.getUTCDay()) % 7) + 7;
+    var dstStart = new Date(Date.UTC(year, 2, secondSundayMarch, 8, 0, 0));
+    var novFirst = new Date(Date.UTC(year, 10, 1));
+    var firstSundayNov = 1 + ((7 - novFirst.getUTCDay()) % 7);
+    var dstEnd = new Date(Date.UTC(year, 10, firstSundayNov, 7, 0, 0));
+    var chicagoOffsetHours = (nowUtc >= dstStart && nowUtc < dstEnd) ? -5 : -6;
+    var chicagoMs = nowUtc.getTime() + chicagoOffsetHours * 3600 * 1000;
+    var cd = new Date(chicagoMs);
+    var pad = function (n) { return ("0" + n).slice(-2); };
+    return cd.getUTCFullYear() + ("0" + (cd.getUTCMonth() + 1)).slice(-2) + ("0" + cd.getUTCDate()).slice(-2) + " " +
+        pad(cd.getUTCHours()) + ":" + pad(cd.getUTCMinutes()) + ":" + pad(cd.getUTCSeconds());
+}
+var _epochCache = {}, _epochCacheN = 0;
+function dateTimeToEpochApprox(sdate, stime) {
+    var ck = sdate + " " + stime;
+    var hit = _epochCache[ck];
+    if (hit !== undefined) return hit;
+    var y = parseInt(sdate.substr(0, 4), 10), mo = parseInt(sdate.substr(4, 2), 10), d = parseInt(sdate.substr(6, 2), 10);
+    var parts = stime.split(":");
+    var v = Math.floor(Date.UTC(y, mo - 1, d, parseInt(parts[0], 10), parseInt(parts[1], 10), parseInt(parts[2], 10)) / 1000);
+    if (_epochCacheN >= 20000) { _epochCache = {}; _epochCacheN = 0; } // 메모리 상한: 초과 시 비움
+    _epochCache[ck] = v; _epochCacheN++;
+    return v;
+}
+function formatLabel(cycle) { return "T" + ("0000" + cycle).slice(-4); }
+function countBarsAfterEpoch(bars, epochRef) {
+    if (epochRef === undefined || epochRef === null) return 0;
+    var firstMatchIdx = -1;
+    for (var i = 0; i < bars.length; i++) {
+        if (dateTimeToEpochApprox(String(bars[i].sdate), bars[i].stime) >= epochRef) { firstMatchIdx = i; break; }
+    }
+    if (firstMatchIdx === -1) return 0;
+    var firstMatchEpoch = dateTimeToEpochApprox(String(bars[firstMatchIdx].sdate), bars[firstMatchIdx].stime);
+    var startCountIdx = (firstMatchEpoch === epochRef) ? firstMatchIdx + 1 : firstMatchIdx;
+    return Math.max(0, bars.length - startCountIdx);
+}
+
+
+// ---------------------------------------------------------------------------------
+// [신규][2026-09-30][v5.17 차트봉 카운트를 단일 기준값으로 통일 + 불일치 원인 진단]
+// 기준값 = "신호 시각 이후의 차트 완결봉 수(마지막 봉 제외, filled 제외)". 실제 차트와 0.2~1.3% 내로 맞는 것을 알림 실측(1160/1162,
+// 327/330, 1263/1280)으로 확인. 이 값을 (1)워밍업 재판정의 26봉 게이트, (2)판정사유 표시(gate=N/26), (3)게이트 신뢰성 검사,
+// (4)실시간 판정의 게이트 카운터(워밍업마다 이 값으로 덮어씀), (5)재조회 창 크기(오래된 신호를 못 덮으면 다음 요청을 최대 크기로)
+// 에 일괄 적용한다. 실시간이 센 봉수는 워밍업 사이 구간의 임시값일 뿐이며 다음 워밍업에서 항상 기준값으로 교정된다.
+// 재동기화 직전 값(실시간이 센 값)과 기준값이 2 이상 다르면(단, 같은 실행 중 직전 동기화가 있었던 신호만) GATE_COUNT_SYNC 줄로
+// 원인 판별용 수치를 남긴다. 재시작 직후 첫 동기화(꺼진 시간분/이전 누적 오차)는 진단로그에만 남기고 알림은 내지 않는다.
+var liveReseedStats = {};              // 프레임 -> { n: 실시간 빌더 재시작 횟수, discarded: 버려진 부분봉 틱수(틱봉), gap: 무틱공백 정지 횟수(분봉) }
+var windowNeedsFull = {};              // 프레임 -> true: 재조회 창이 가장 오래된 감시신호를 못 덮음 -> 다음 요청은 최대 크기로
+var windowUncoverableLoggedAt = {};    // 프레임 -> 마지막 기록시각(ms) - 최대 크기로도 못 덮는 초장기 신호 진단로그 스팸 방지
+function countRealBarsAfterEpoch(bars, epochRef) {
+    if (epochRef === undefined || epochRef === null) return 0;
+    var n = 0;
+    for (var i = 0; i < bars.length; i++) {
+        if (bars[i].filled) continue;
+        if (dateTimeToEpochApprox(String(bars[i].sdate), bars[i].stime) > epochRef) n++;
+    }
+    return n;
+}
+function getLiveReseedStats(period) { return liveReseedStats[period] || (liveReseedStats[period] = { n: 0, discarded: 0, gap: 0 }); }
+function syncGateCounter(sig, completedBars, preWalkCount) {
+    // [v5.26] 진단/알림(GATE_COUNT_SYNC)은 제거하고 교정만 남김: 게이트 카운터를 차트 완결봉 기준값으로 덮어씀(올리기/내리기 모두)
+    sig.barsElapsedSinceRegistration = countRealBarsAfterEpoch(completedBars, sig.signalEpoch);
+}
+function windowCoversOldestSignal(fileLabel, bars) {
+    var oldest = oldestPendingSignalEpoch(fileLabel);
+    if (oldest === null || bars.length === 0) return true;
+    return dateTimeToEpochApprox(String(bars[0].sdate), bars[0].stime) <= oldest;
+}
+var pendingSignals = [];
+var barCheckHistory = {}; // [신규][2026-09-05][차트정확도 검증]
+var barCheckRoundCounter = {};
+// [신규][2026-09-14][정확성 검증 방안1+3 - 다수결 합의 + 격리, min봉 파일과
+// 동일 이식] barCheckHistory(최근 관측이력)를 재료로 "최근에 받은 값"을
+// 무조건 믿는 대신 "이력 중 가장 많이 반복된 값(다수결)"을 신뢰값으로
+// 채택한다. 세션 내 이력만으로 계산하므로 영속화 불필요.
+var barQuarantineCounts = {}; // 다수결과 달라서 교체된(격리된) 횟수
+// [제거][사용자 요청][검증완료] BAR_QUARANTINE_ALERT_THRESHOLD 삭제됨 -
+// 이 값을 검사하던 알람출력 코드 자체를 이미 제거해서(봉불안정 알람
+// 팝업 제거 작업) 고아가 된 상태였음.
+
+// ================================================================================
+// [2026-08-18 신규][감시목록 크래시안전 저장소 - 엑셀 샤딩 방식]
+// (설계 근거는 2안 틱봉 분리본과 동일)
+//
+// [중요 - 자동화 한계] 엑셀데이터객체는 파일 경로를 코드로 지정/생성하는
+// 기능이 없음 - 종목마다 사람이 xlsx 파일을 한 번 직접 만들고 속성창에서
+// 지정해야 함. 이름 규칙(2안과 동일, 1안/2안이 감시목록을 공유하려면
+// 반드시 같은 파일을 가리켜야 함):
+//   C:\dashboard\excel_state\<INSTRUMENT_FOLDER>_tick_state.xlsx
+// ================================================================================
+
+// [신규][2026-09-14][철회판정 안정성게이트 이식 - min봉 파일에서 검증 후 이식]
+// 실측 테스트(test_tick_retraction_stability.js)로 확인된 문제: 철회판정은
+// 재조회 사이클마다 기준봉(SA/SB) 값을 새로 계산해서 쓰는데, 그 원본 틱데이터
+// 자체가 재조회마다 미세하게 흔들릴 수 있어(이미 이 파일 자체 진단장치
+// [DIAG][BAR_MISMATCH]가 실제로 감지하고 있음), margin이 HOLD_MARGIN_THRESHOLD
+// 경계 부근에 있을 때 0.4pt 수준의 흔들림만으로도 유예<->즉시철회 판정이
+// 실제로 뒤집히는 것까지 재현/확인됨. min봉 파일과 동일한 방식(순환횟수 대신
+// 실제 시각 ms 기준 - 재시작해도 안 흔들림)으로 "이 기준봉 값이 최근
+// STABILITY_REQUIRED_MS 동안 안 변했을 때만 철회판정을 신뢰"하는 게이트를
+// 추가한다. min봉과 달리 재조회 lookback 자체를 늘리는 용도(bars 치환)는
+// 이식하지 않았다 - 여긴 순수하게 "안정성 추적"만 담당(범위를 검증된
+// 문제에만 좁게 한정).
+// [삭제][2026-09-29] 봉캐시(barHistoryCache) 전체 제거 - 저장/복원/갱신만 하고 판정 어디서도 읽지 않던 죽은 기능(분봉은 v4.1에서 이미 제거됨)
+
+function pkOf(sig) { return sig.tf + "|" + sig.kind + "|" + sig.sdate + "|" + sig.stime + "|" + Number(sig.price).toFixed(2); }
+function simpleHash(str) {
+    var h = 0;
+    for (var i = 0; i < str.length; i++) { h = ((h << 5) - h) + str.charCodeAt(i); h |= 0; }
+    return Math.abs(h);
+}
+
+
+function auditPendingReassignment(beforeArr, afterArr, explainedPks, siteName) {
+    try {
+        var afterSet = {};
+        afterArr.forEach(function (s) { afterSet[pkOf(s)] = true; });
+        var unexplained = [];
+        var unexplainedSigs = [];
+        beforeArr.forEach(function (s) {
+            var pk = pkOf(s);
+            if (!afterSet[pk] && !explainedPks[pk]) { unexplained.push(pk); unexplainedSigs.push(s); }
+        });
+        if (unexplained.length > 0) {
+            var whenParts = nowServerTimeStr().split(" ");
+            var summary = unexplained.slice(0, 10).join(";");
+            if (unexplained.length > 10) summary += ";...외" + (unexplained.length - 10) + "건";
+            logMsg("!! [경고][설명안된소실] site=" + siteName + " " + unexplained.length + "건: " + summary);
+            try { timedPrintOnFile(OUTPUT_FILE, (currentItemName || INSTRUMENT_NAME) + ",SYSTEM,UNEXPLAINED_REMOVAL_ALERT," + whenParts[0] + "," + whenParts[1] + "," + siteName + "," + unexplained.length + "," + summary + "\n"); } catch (e2) {}
+            unexplainedSigs.forEach(function (s) {
+                try { logPendingRemoval(s, "UNEXPLAINED", "AUDIT_DETECTED_SILENT_REMOVAL(site=" + siteName + ")"); } catch (e3) {}
+            });
+        }
+    } catch (e) {}
+}
+
+// [신규][2026-09-14][판정경로 통합 - 공통 오케스트레이터] min봉 파일과 동일한 개념 -
+// 실시간/워밍업 두 판정루프가 각자 구현하던 스냅샷/keep-resolve판단/재배열/감사호출/
+// 파일기록 뼈대를 하나로 합쳤다. 판단로직(가격게이트/확인단계/봉replay/GATE_RESYNC 등)
+// 은 각 호출부의 resolveFn 안에 그대로 남아있다.
+function runPendingResolutionPass(filterFn, resolveFn, siteName, markDirtyOnKeep) {
+    var stillPending = [], resolvedLines = [];
+    function keepPending(sig) { stillPending.push(sig); if (markDirtyOnKeep) 0; }
+    var beforeSnapshot = pendingSignals.slice();
+    var explainedPks = {};
+    for (var i = 0; i < pendingSignals.length; i++) {
+        var sig = pendingSignals[i];
+        if (!filterFn(sig)) { stillPending.push(sig); continue; }
+        var resolved;
+        try {
+            resolved = resolveFn(sig, resolvedLines, function () { explainedPks[pkOf(sig)] = true; });
+        } catch (eResolve) {
+            // [근본수정][2026-09-25][격리실패 - 신호1개 예외가 배열 전체를 멈추던
+            // 버그] 이 for-loop는 신호별 try/catch가 없어서, 배열 앞쪽 신호
+            // 하나가 resolveFn(applyPriceToSignal 등) 처리중 예외를 던지면
+            // 그 뒤에 있는 모든 신호가 이번 패스에서 통째로 스킵됐다(다음
+            // 틱/사이클에서도 배열 순서가 그대로라 매번 반복 - 영구정지).
+            // 게다가 이 함수의 호출부(updatePendingSignals)는 다시
+            // Main_OnUpdateMarket의 try{}catch(e){}에 감싸여 있어 예외가
+            // 완전히 조용히 삼켜졌다 - 로그에 아무 흔적도 안 남는 이유.
+            // 실제 재현: T0340/T0345류 신호가 26봉 게이트 초과+가격돌파
+            // 확인됐는데도 감시중에서 영원히 안 풀리는 증상을 Node.js
+            // 샌드박스에서 원본함수 그대로 실행해 재현/증명함(고의로 손상시킨
+            // stateHistory 하나로 뒤 신호 전부 멈추는 것 확인). 신호별로
+            // try/catch를 격리해서, 하나가 깨져도 그 신호만 "이번엔 미해결"
+            // 처리하고 나머지는 계속 정상 판정되게 한다. 동시에 어떤 신호의
+            // 어떤 필드가 왜 깨졌는지 진단로그에 바로 남겨서(전에는 수동으로
+            // 대시보드를 뒤져야 했음) 다음 발생시 즉시 원인 확인 가능하게 한다.
+            resolved = false;
+            try {
+                var pkErr = pkOf(sig);
+                var errMsg = (eResolve && eResolve.message) ? eResolve.message : String(eResolve);
+                var errStack = (eResolve && eResolve.stack) ? String(eResolve.stack).replace(/\n/g, " | ").slice(0, 400) : "";
+                logDiagnostic("[DIAG][RESOLVE_EXCEPTION] site=" + siteName + " pk=" + pkErr + " state=" + sig.state + " gate=" + (sig.barsElapsedSinceRegistration || 0) + "/" + REQUIRED_BAR_DELAY + " err=" + errMsg + " stack=" + errStack);
+                timedPrintOnFile(OUTPUT_FILE, (sig.itemName || "") + "," + (sig.tf || "") + ",RESOLVE_EXCEPTION," + (sig.sdate || "") + "," + (sig.stime || "") + "," + Number(sig.price).toFixed(2) + "," + siteName + "," + errMsg.replace(/,/g, ";") + "\n");
+            } catch (eLog) {}
+        }
+        if (!resolved) keepPending(sig);
+    }
+    pendingSignals = stillPending;
+    auditPendingReassignment(beforeSnapshot, pendingSignals, explainedPks, siteName);
+    if (resolvedLines.length > 0) { writeLinesToFile(resolvedLines); pendingStateDirty = true; }
+}
+
+
+function loadPendingStateText() {
+    // [v5.30_텍스트] 파일/엑셀 복원 없음. 재시작하면 감시목록은 비어서 시작하고, 첫 워밍업이 차트 구간에서 신호를 다시 찾아 감시목록을
+    // 새로 만든다(상태/카운터는 차트 봉으로 다시 계산). 재조회 창보다 오래된 미판정 신호와 쌓인 이력은 이어지지 않는다.
+    pendingSignals = [];
+    seenKeys = {}; seenKeysByPrice = {};
+    logMsg("[텍스트버전] 복원 없음 - 첫 워밍업이 차트 구간에서 신호를 다시 찾아 감시목록을 재구성합니다.");
+}
+function buildPendingKeysString() {
+    var parts = [];
+    for (var i = 0; i < pendingSignals.length; i++) { var sig = pendingSignals[i]; parts.push(sig.tf + "|" + sig.kind + "|" + sig.sdate + "|" + sig.stime + "|" + sig.price.toFixed(2)); }
+    return parts.join(";");
+}
+function shortCheckCategory() { return "NONE"; }
+function buildPendingDetailsString() {
+    var parts = [];
+    for (var i = 0; i < pendingSignals.length; i++) {
+        var sig = pendingSignals[i];
+        var pk = sig.tf + "|" + sig.kind + "|" + sig.sdate + "|" + sig.stime + "|" + sig.price.toFixed(2);
+        var barsElapsed = sig.barsElapsedSinceRegistration || 0;
+        var entry = [pk, "STATE:" + sig.state, "GATE:" + barsElapsed + "/" + REQUIRED_BAR_DELAY + "bars", "LAST_CHECKED:" + shortCheckCategory()];
+        if (sig.stateHistory && sig.stateHistory.length > 0) {
+            var histForHeartbeat = sig.stateHistory.filter(function (h) { return h.s.indexOf("REGISTRATION_BASIS(") !== 0; });
+            if (histForHeartbeat.length > 0) entry.push("HISTORY:" + histForHeartbeat.map(function (h) { return h.s; }).join(" -> "));
+        }
+        parts.push(entry.join("^"));
+    }
+    Object.keys(orphanedSignalDetails).forEach(function (pk) { parts.push(pk + "^" + orphanedSignalDetails[pk].detail); });
+    return parts.join(";");
+}
+function formatHistoryWhen(whenStr) { if (typeof whenStr !== "string") return whenStr; var m = whenStr.match(/^(\d{4})(\d{2})(\d{2}) (.+)$/); return m ? (m[2] + "/" + m[3] + " " + m[4]) : whenStr; }
+// [2026-08-17 이식][2안 틱봉 2026-08-13 근본원인수정을 1안에도 동일 적용]
+// 예전엔 무조건 배열 끝에 push만 해서, "언제 pushStateHistory가
+// 호출됐는지(wall-clock 호출순서)"와 "그 항목이 실제로 가리키는
+// 시각(embedded epoch)"이 다르면 순서가 뒤섞였다. 이제 매번 끝에 push하는
+// 대신, 각 항목의 실제 시각(epoch)을 기준으로 항상 올바른 시간순 위치에
+// 삽입한다 - 같은 epoch끼리는 기존 호출순서를 그대로 유지(안정정렬).
+// [2026-10-02 신규][게이트 열림 봉 이력] 게이트가 열리는 그 봉(분 25봉째/틱 26봉째)의 시각과 고가/저가를 신호 이력에 한 번 남겨,
+// 게이트 시점이 실제 차트와 맞는지 확인할 수 있게 한다. src=REAL(실시간 완결봉이 센 시점), src=WARM(워밍업 재생이 센 시점) - 출처별로 신호당 1회씩만.
+// 판정/게이트 로직은 건드리지 않고 이력 문자열만 추가한다(쉼표/세미콜론 없이 공백 구분 - 하트비트/사유 필드 구분자와 충돌 방지).
+function logGateOpenOnce(sig, src, whenStr, high, low, n) {
+    try {
+        var tag = "src=" + src;
+        if (sig.stateHistory) {
+            for (var gi = 0; gi < sig.stateHistory.length; gi++) {
+                var gs = sig.stateHistory[gi].s;
+                if (gs.indexOf("GATE_OPEN(") === 0 && gs.indexOf(tag) >= 0) return;
+            }
+        }
+        pushStateHistory(sig, whenStr, "GATE_OPEN", sig.price, "n=" + n + " H=" + Number(high).toFixed(2) + " L=" + Number(low).toFixed(2) + " " + tag);
+    } catch (e) { /* 이력 추가 실패는 무시(판정에 영향 없음) */ }
+}
+function pushStateHistory(sig, whenStr, stateWord, price, extraDetail) {
+    if (!sig.stateHistory) sig.stateHistory = [];
+    var dw = formatHistoryWhen(whenStr);
+    var epoch = null;
+    if (typeof whenStr === "string") {
+        var wsParts = whenStr.split(" ");
+        if (wsParts.length === 2 && wsParts[0].length === 8) { try { epoch = dateTimeToEpochApprox(wsParts[0], wsParts[1]); } catch (e) { epoch = null; } }
+    }
+    var entry = { t: dw, s: stateWord + "(" + dw + ")@" + Number(price).toFixed(2) + (extraDetail ? "[" + extraDetail + "]" : ""), epoch: epoch };
+    if (epoch === null || sig.stateHistory.length === 0) { sig.stateHistory.push(entry); return entry; }
+    var insertAt = sig.stateHistory.length;
+    for (var i = sig.stateHistory.length - 1; i >= 0; i--) {
+        var existingEpoch = sig.stateHistory[i].epoch;
+        if (existingEpoch === null || existingEpoch === undefined || existingEpoch <= epoch) { insertAt = i + 1; break; }
+        insertAt = i;
+    }
+    sig.stateHistory.splice(insertAt, 0, entry);
+    return entry;
+}
+function buildResolvedReasonField(sig, result, whenStr, price, cellTextOverride) {
+    var shortReason;
+    if (cellTextOverride) shortReason = cellTextOverride;
+    else if (result === "ACHIEVED") shortReason = "ACHIEVED(" + whenStr + ")@" + Number(price).toFixed(2);
+    else if (result === "INVALID") {
+        var rr = sig.resolveReason || "";
+        if (rr.indexOf("NO_PULLBACK") === 0) shortReason = "NO_PULLBACK_INVALID(" + whenStr + ")@" + Number(price).toFixed(2);
+        else if (rr.indexOf("NO_REBOUND") === 0) shortReason = "NO_REBOUND_INVALID(" + whenStr + ")@" + Number(price).toFixed(2);
+        else if (rr.indexOf("AMBIGUOUS_BAR") === 0) shortReason = "AMBIGUOUS_INVALID(" + whenStr + ")@" + Number(price).toFixed(2);
+        else shortReason = "INVALID(" + whenStr + ")@" + Number(price).toFixed(2);
+    } else shortReason = String(result);
+    var histStr = (sig.stateHistory && sig.stateHistory.length > 0) ? " / HISTORY:" + sig.stateHistory.map(function (h) { return h.s; }).join(" -> ") : "";
+    return (shortReason + histStr).replace(/,/g, ";");
+}
+function applyPriceToSignal(sig, curPrice, curDateStr, curTimeStr, gateOpen, callerTag) {
+    var whenStr = (curDateStr && curTimeStr) ? (curDateStr + " " + curTimeStr) : "?";
+    // [신규][2026-09-29][게이트 신뢰성 안전장치] 위 REQUIRED_BAR_DELAY 옆
+    // 주석 참고 - 게이트가 열렸다고 판단됐어도 최근 실측 봉간격 대비
+    // 터무니없이 빠르면 "아직 안 열린 것"으로 안전하게 되돌려서 확정을
+    // 보류한다(기존 !gateOpen 분기를 그대로 재사용 - 새 상태전이 경로 없음).
+    if (gateOpen === true && !isGateCountSane(sig, curDateStr, curTimeStr)) {
+        logGateSanitySuspectOnce(sig, whenStr);
+        gateOpen = false;
+    }
+    var gateDetail = "fn=" + (callerTag || "?") + ",gate=" + (sig.barsElapsedSinceRegistration || 0) + "/" + REQUIRED_BAR_DELAY + "bars";
+    if (gateOpen === false) {
+        if (sig.isBull) {
+            if (sig.state === "WAITING" && curPrice < sig.price) { sig.state = "PULLBACK"; sig.pullbackWhen = whenStr; sig.pullbackPrice = curPrice; if (!sig._pullbackLogged) { sig._pullbackLogged = true; pushStateHistory(sig, whenStr, "PULLBACK_CONFIRMED", curPrice); } }
+            else if (sig.state === "PULLBACK" && curPrice > sig.price) { sig.state = "WAITING"; } // [수정][2026-09-29] 게이트 닫힘 구간의 눌림<->대기 왕복은 이력을 무한히 늘리므로 상태값만 바꾸고 이력은 남기지 않는다(눌림확인은 신호당 첫 1회만 기록)
+        } else {
+            if (sig.state === "WAITING" && curPrice > sig.price) { sig.state = "PULLBACK"; sig.pullbackWhen = whenStr; sig.pullbackPrice = curPrice; if (!sig._pullbackLogged) { sig._pullbackLogged = true; pushStateHistory(sig, whenStr, "PULLBACK_CONFIRMED", curPrice); } }
+            else if (sig.state === "PULLBACK" && curPrice < sig.price) { sig.state = "WAITING"; }
+        }
+        return null;
+    }
+    if (sig.isBull) {
+        if (sig.state === "WAITING") {
+            if (curPrice < sig.price) { sig.state = "PULLBACK"; sig.pullbackWhen = whenStr; sig.pullbackPrice = curPrice; pushStateHistory(sig, whenStr, "PULLBACK_CONFIRMED", curPrice); }
+            else if (curPrice > sig.price) { sig.resolveReason = "NO_PULLBACK->INVALID(" + whenStr + "@" + curPrice.toFixed(2) + ")"; pushStateHistory(sig, whenStr, "INVALID_CONFIRMED", curPrice, gateDetail); return "INVALID"; }
+        } else if (sig.state === "PULLBACK") {
+            if (curPrice >= sig.price) { sig.resolveReason = "PULLBACK->ACHIEVED(" + whenStr + "@" + curPrice.toFixed(2) + ")"; pushStateHistory(sig, whenStr, "ACHIEVED_CONFIRMED", curPrice, gateDetail); return "ACHIEVED"; }
+        }
+    } else {
+        if (sig.state === "WAITING") {
+            if (curPrice > sig.price) { sig.state = "PULLBACK"; sig.pullbackWhen = whenStr; sig.pullbackPrice = curPrice; pushStateHistory(sig, whenStr, "PULLBACK_CONFIRMED", curPrice); }
+            else if (curPrice < sig.price) { sig.resolveReason = "NO_REBOUND->INVALID(" + whenStr + "@" + curPrice.toFixed(2) + ")"; pushStateHistory(sig, whenStr, "INVALID_CONFIRMED", curPrice, gateDetail); return "INVALID"; }
+        } else if (sig.state === "PULLBACK") {
+            if (curPrice <= sig.price) { sig.resolveReason = "REBOUND->ACHIEVED(" + whenStr + "@" + curPrice.toFixed(2) + ")"; pushStateHistory(sig, whenStr, "ACHIEVED_CONFIRMED", curPrice, gateDetail); return "ACHIEVED"; }
+        }
+    }
+    return null;
+}
+function buildAchievedField(sig, resolvedSdate, resolvedStime) {
+    var elapsedSec = dateTimeToEpochApprox(String(resolvedSdate), resolvedStime) - sig.signalEpoch;
+    var d = new Date(sig.registeredAt + elapsedSec * 1000);
+    var hh = ("0" + d.getHours()).slice(-2), mi = ("0" + d.getMinutes()).slice(-2), ss = ("0" + d.getSeconds()).slice(-2);
+    var totalMin = Math.max(0, Math.round(elapsedSec / 60));
+    return hh + ":" + mi + ":" + ss + "(" + Math.floor(totalMin / 60) + "H" + (totalMin % 60) + "M)";
+}
+function updatePendingSignals(curPrice, curDateStr, curTimeStr) {
+    if (pendingSignals.length === 0) return;
+    runPendingResolutionPass(
+        function () { return true; }, // 실시간은 원래도 tf 구분 없이 pendingSignals 전체를 본다
+        function (sig, resolvedLines, markExplained) {
+            var gateOpen = (sig.barsElapsedSinceRegistration || 0) >= REQUIRED_BAR_DELAY;
+            var _stBefore = sig.state, _hLenBefore = sig.stateHistory ? sig.stateHistory.length : 0;
+            var result = applyPriceToSignal(sig, curPrice, curDateStr, curTimeStr, gateOpen, "updatePendingSignals(REAL)");
+            // [수정][2026-09-29] 틱마다 모든 감시신호를 저장대상으로 표시하던 것을, 상태/이력이 실제로 바뀐 신호만 표시하도록 변경
+            if (sig.state !== _stBefore || (sig.stateHistory ? sig.stateHistory.length : 0) !== _hLenBefore) 0;
+            if (!gateOpen) return false;
+            // [2026-09-14][죽은코드 제거] 확인단계가 항상 즉시확정이라 단순화.
+            if (!result) return false;
+            var kindLabel = (result === "ACHIEVED") ? "STATUS_ACHIEVED" : "STATUS_INVALID";
+            var achievedField = buildAchievedField(sig, curDateStr, curTimeStr);
+            var reasonField = buildResolvedReasonField(sig, result, curDateStr + " " + curTimeStr, curPrice);
+            resolvedLines.push(sig.itemName + "," + sig.tf + "," + kindLabel + "," + sig.sdate + "," + sig.stime + "," + sig.price.toFixed(2) + "," + achievedField + "," + reasonField + "," + sig.kind);
+            recordResolution(sig.tf, sig.kind, sig.sdate, sig.stime, sig.price, result, sig.sdate + " " + sig.stime);
+            logPendingRemoval(sig, result, reasonField); // [근본수정][2026-09-26][v5.3] 예전엔 짧은 태그("REALTIME_RESOLVE@...")만 REMOVAL_LOG에 남겨서, 1차 STATUS_ACHIEVED/INVALID 매칭이 실패해 REMOVAL_LOG 복구경로로 대체될 때 warmupResolve 경로(rReasonField 그대로 전달)와 달리 실시간 경로만 사유가 텅 비어 보이는 비대칭이 있었다(사용자 지적: "여러 곳에서 판정하는데 한 곳만 제대로") - 이미 계산해둔 reasonField(전체 HISTORY 포함)를 그대로 넘겨 두 경로를 동일하게 맞춘다.
+            markExplained();
+            return true;
+        },
+        "realtimeResolve",
+        false // markDirtyOnKeep: [수정][2026-09-29] 틱마다 전체 표시하던 것을 끄고, 실제 변경은 위 resolveFn에서 개별 표시
+    );
+}
+function findFirstBarIndexAtOrAfterEpoch(bars, epoch) {
+    var lo = 0, hi = bars.length;
+    while (lo < hi) {
+        var mid = (lo + hi) >> 1;
+        var midEpoch = dateTimeToEpochApprox(String(bars[mid].sdate), bars[mid].stime);
+        if (midEpoch < epoch) lo = mid + 1; else hi = mid;
+    }
+    return lo;
+}
+function resolveHistorically(sig, bars) {
+    if (bars.length === 0) return null;
+    var sigEpochCached = sig.signalEpoch;
+    // [2026-09-25 이력] 카운팅커서(lastAppliedBarEpoch)/판정커서(lastJudgedBarEpoch)
+    // 분리 자체는 유지한다(WAITING/PULLBACK 코스메틱 이력 중복방지 목적).
+    // [근본수정][2026-09-29][WARM 안전망 영구봉쇄 버그] 그런데 그 분리 이후에도
+    // 이 판정커서를 "달성/무효(터미널) 판정 스킵" 기준으로 그대로 썼다 - 그런데
+    // processLiveBar(실시간 봉완결)는 이 커서를 매 완결봉마다 "지금"까지
+    // 무조건 전진시킨다(가격판정 없이, 카운팅커서와 함께). 그 결과 실시간
+    // 추적이 살아있는 신호는(항상 그렇다 - REALTIME_TRACK_ENABLED 상시 true)
+    // 이 커서가 늘 "방금"까지 따라붙어서, WARM이 실제 차트를 재조회해도
+    // startIndex가 배열 끝을 넘어가 이 for문이 통째로 한 번도 안 돈다.
+    // 실시간 판정(updatePendingSignals)은 그 순간 들어온 틱 가격 1개만 보는데,
+    // 그 틱이 하필 눌림반등/달성 문턱을 놓치면(체결이 뜸한 시간대) - 그 구간의
+    // "진짜 high/low"를 재확인할 기회가 영구히 사라진다(NASDAQ100 분봉
+    // M0016/M0017 실사례를 정확한 조건으로 재현 완료 - 등록가를 한참 뚫고
+    // 내려간 실제 차트 데이터를 갖고 있어도 달성처리가 전혀 안 됨. 틱봉도
+    // 동일 구조이므로 같이 고친다).
+    // 판정커서는 "WAITING/PULLBACK 코스메틱 토글 재생만" 막는 용도로 한정하고,
+    // ACHIEVED/INVALID 확정 검사는 매 WARM 재조회마다 signalEpoch부터 매번
+    // 그 봉의 실제 high/low로 다시 확인한다 - 이미 터미널 처리된 신호는
+    // pendingSignals에서 빠져있어 재확인 대상이 아니므로(멱등), 중복확정
+    // 위험이 없다. 코스메틱 이력 중복방지(원래 09-25/26 수정의 진짜 목적)는
+    // alreadyCosmeticJudged 플래그로 그대로 보존한다(재현테스트로 중복 재발
+    // 없음 확인).
+    var judgedFromEpoch = (sig.lastJudgedBarEpoch !== undefined && sig.lastJudgedBarEpoch !== null) ? sig.lastJudgedBarEpoch : sigEpochCached;
+    var countedFromEpoch = (sig.lastAppliedBarEpoch !== undefined && sig.lastAppliedBarEpoch !== null) ? sig.lastAppliedBarEpoch : sigEpochCached;
+    var startBarIndex = findFirstBarIndexAtOrAfterEpoch(bars, sigEpochCached);
+    // [신규][v5.17] 재조회 창이 신호 시점을 덮으면, 이 봉 시점까지 센 차트 완결봉 수(trueBarCountAsOfThisBar)를 영속 카운터에도 그대로 기록 -
+    // 판정사유(gate=N/26)/게이트 신뢰성 검사/실시간 게이트가 전부 같은 기준값을 본다. 못 덮으면(창이 짧음) 기존 커서 방식 유지.
+    var windowCovers = (bars.length > 0 && dateTimeToEpochApprox(String(bars[0].sdate), bars[0].stime) <= sigEpochCached);
+    var barsSinceSignal = sig.barsElapsedSinceRegistration || 0;
+    // [근본수정][2026-09-29][2차][stale 게이트값을 과거봉에 잘못 적용하던 버그
+    // - 재현테스트로 확인] barsSinceSignal은 여러 재조회에 걸쳐 누적되는
+    // "영속" 카운터라, 위에서 항상 signalEpoch부터 다시 스캔하게 바꾼
+    // 뒤로는 실시간이 이미 훨씬 뒤(미래) 봉까지 카운트를 올려놓은 상태에서
+    // "과거의" 봉을 재검사할 때도 이 부풀려진 최종값을 그대로 써버려,
+    // 실제로는 게이트가 열리기 한참 전인 초기 봉이 "게이트 열림" 판정을
+    // 받는 조기확정 위험이 있었다(재현 확인 - gate=60으로 부풀려진 상태에서
+    // 2번째 봉이 즉시 AMBIGUOUS_BAR로 확정되는 것까지 실제 재현). 틱봉은
+    // 시간조건이 따로 없어서(gateOpen이 봉개수 하나로만 결정) 이 문제에
+    // 특히 취약함을 확인 - trueBarCountAsOfThisBar는 이번 호출에서
+    // signalEpoch부터 매번 처음부터 다시 세는 "이 봉 시점 기준" 카운트로,
+    // 영속 카운터(barsSinceSignal, 대시보드 표시/실시간 연계용, 용도 그대로
+    // 유지)와 분리해서 게이트 열림 판정에만 쓴다.
+    var trueBarCountAsOfThisBar = 0;
+    for (var bj = startBarIndex; bj < bars.length; bj++) {
+        var bar = bars[bj];
+        var barEpoch = dateTimeToEpochApprox(String(bar.sdate), bar.stime);
+        if (barEpoch <= sigEpochCached) continue;
+        // [2026-09-25 근본수정][filled(가짜/보간)봉이 게이트+판정에 섞이던 버그]
+        // bar.filled=true는 재조회 응답에 구멍(누락)이 생겨 직전 정상봉의
+        // 고가/저가를 그대로 복사해 채운 "실제 관측이 아닌" 값이다 - 다수결/
+        // 이력 검증(barCheckHistory) 쪽은 이미 filled를 제외하고 있었는데
+        // (cbar.filled continue), 정작 여기(26봉 게이트 카운트 및 달성/무효
+        // 판정)는 필터링이 없어서 가짜봉도 그대로 카운트되고 그 가짜 고가/저가로
+        // 달성/무효가 확정될 수 있었다(분봉 파일과 동일 재현 테스트로 확인).
+        // 실제 새 데이터가 아니므로 게이트 카운트도, 가격판정도 전부 건너뛴다 -
+        // 커서도 안 움직이므로 다음 재조회에서 이 구간이 실제 데이터로 채워지면
+        // 그때 다시 정상 처리된다.
+        if (bar.filled) continue;
+        trueBarCountAsOfThisBar++;
+        var alreadyCosmeticJudged = (barEpoch <= judgedFromEpoch); // [2026-09-29] 코스메틱(WAITING/PULLBACK 토글) 이력 중복방지 전용 플래그
+        if (barEpoch > countedFromEpoch) {
+            barsSinceSignal++;
+            sig.barsElapsedSinceRegistration = barsSinceSignal;
+            sig.lastAppliedBarEpoch = barEpoch;
+            countedFromEpoch = barEpoch;
+        }
+        if (barEpoch > judgedFromEpoch) { sig.lastJudgedBarEpoch = barEpoch; judgedFromEpoch = barEpoch; }
+        if (windowCovers) sig.barsElapsedSinceRegistration = trueBarCountAsOfThisBar;
+        var gateOpen = (trueBarCountAsOfThisBar >= REQUIRED_BAR_DELAY);
+        if (gateOpen && windowCovers) logGateOpenOnce(sig, "WARM", bar.sdate + " " + bar.stime, bar.high, bar.low, trueBarCountAsOfThisBar); // [게이트 열림 봉 이력] // [2026-09-29] 영속카운터 대신 이 봉 시점 기준 카운트 사용
+        var firstPrice, secondPrice;
+        if (sig.isBull) { firstPrice = bar.low; secondPrice = bar.high; } else { firstPrice = bar.high; secondPrice = bar.low; }
+        if (!gateOpen) {
+            // [2026-09-29] 게이트가 아직 닫혀있는 구간의 WAITING/PULLBACK
+            // 코스메틱 토글은, 실시간이 이미 훑은 구간(alreadyCosmeticJudged)이면
+            // 재생하지 않는다 - 09-25/26 수정의 원래 목적(중복이력 방지) 그대로 보존.
+            if (!alreadyCosmeticJudged) { applyPriceToSignal(sig, firstPrice, bar.sdate, bar.stime, false, "resolveHistorically(WARM)"); applyPriceToSignal(sig, secondPrice, bar.sdate, bar.stime, false, "resolveHistorically(WARM)"); }
+            continue;
+        }
+        if (sig.state === "WAITING" && bar.low < sig.price && bar.high > sig.price) {
+            sig.resolveReason = "AMBIGUOUS_BAR(" + bar.sdate + "_" + bar.stime + ")->INVALID";
+            pushStateHistory(sig, bar.sdate + " " + bar.stime, "INVALID_CONFIRMED", sig.price);
+            return { result: "INVALID", sdate: bar.sdate, stime: bar.stime };
+        }
+        var stateBefore = sig.state;
+        // [2026-09-14][죽은코드 제거] 확인단계(confirmHistoricalResult)가 항상
+        // 즉시통과라, 스냅샷/롤백 없이 결과가 나오면 그대로 반환한다.
+        var r1 = applyPriceToSignal(sig, firstPrice, bar.sdate, bar.stime, true, "resolveHistorically(WARM)");
+        if (r1) return { result: r1, sdate: bar.sdate, stime: bar.stime };
+        if (stateBefore === "WAITING" && sig.state === "PULLBACK") continue;
+        var r2 = applyPriceToSignal(sig, secondPrice, bar.sdate, bar.stime, true, "resolveHistorically(WARM)");
+        if (r2) return { result: r2, sdate: bar.sdate, stime: bar.stime };
+    }
+    return null;
+}
+var TICK_TRUE_ORIGIN_TOLERANCE_SEC = 10;
+function isDuplicatePendingSignal(itemName, tf, kind, sdate, stime, price, trueSdate, trueStime) {
+    // [근본수정][2026-09-09][진짜 원본시각(trueSdate/trueStime) 기준으로
+    // 판정] 예전엔 되짚기 적용된 표시용 sdate/stime을 시간허용오차로
+    // 비교했는데, 되짚기 계산이 재조회마다 흔들릴 수 있어 진짜 같은
+    // 사건을 다른 사건으로 오판하는 문제가 분봉에서 실제사례로 확인됨.
+    // [근본수정][2026-09-10][틱봉 전용: 완전일치->10초 허용오차 + 가격체크
+    // 추가] 위 수정은 "분봉은 원본시각이 완전히 고정된다"는 전제였는데,
+    // 틱봉은 다르다 - TickBarBuilder의 sdate/stime이 chartEx.GetSDate/
+    // GetSTime에서 그대로 오는데, 이 원본 틱데이터 자체가 재조회마다
+    // 살짝 달라지는 현상이 이미 예스스팟에 문의 접수된 상태(별도 확인).
+    // 그래서 완전일치로는 몇 초 차이로 진짜 중복을 놓치는 사례가 실제
+    // 화면에서 확인됨(T0305/T0310/T0315 각각 2번씩 등록, 5~8초 간격).
+    // 36분 단위로 드리프트하던 옛날 버그(표시시각 기준)와는 크기가 전혀
+    // 다른 문제라 10초 정도의 작은 허용오차로는 그 버그가 재발하지
+    // 않는다(10초 << 36분). 가격(price) 체크도 이 분기엔 원래 없었어서
+    // 같이 추가 - "정말 다른 두 신호가 우연히 몇 초 안에 겹치는" 잔여
+    // 리스크까지 막는다.
+    if (trueSdate && trueStime) {
+        var thisTrueEpoch = dateTimeToEpochApprox(String(trueSdate), trueStime);
+        for (var pj = 0; pj < pendingSignals.length; pj++) {
+            var pp = pendingSignals[pj];
+            if (pp.itemName === itemName && pp.tf === tf && pp.kind === kind &&
+                pp.trueSdate && pp.trueStime && Math.abs(price - pp.price) < 0.01) {
+                var ppTrueEpoch = dateTimeToEpochApprox(String(pp.trueSdate), pp.trueStime);
+                if (Math.abs(thisTrueEpoch - ppTrueEpoch) <= TICK_TRUE_ORIGIN_TOLERANCE_SEC) return true;
+            }
+        }
+        return false;
+    }
+    var thisEpoch = dateTimeToEpochApprox(String(sdate), stime);
+    for (var pi = 0; pi < pendingSignals.length; pi++) {
+        var p = pendingSignals[pi];
+        if (p.itemName === itemName && p.tf === tf && p.kind === kind && Math.abs(p.price - price) < 0.01) {
+            var pEpoch = (p.signalEpoch !== undefined && p.signalEpoch !== null) ? p.signalEpoch : dateTimeToEpochApprox(String(p.sdate), p.stime);
+            if (Math.abs(thisEpoch - pEpoch) <= DUP_SIGNAL_TIME_TOLERANCE_SEC) return true;
+        }
+    }
+    return false;
+}
+function findPendingMatch(itemName, tf, kind, sdate, stime, price) {
+    var thisEpoch = dateTimeToEpochApprox(String(sdate), stime);
+    for (var pi = 0; pi < pendingSignals.length; pi++) {
+        var p = pendingSignals[pi];
+        if (p.itemName === itemName && p.tf === tf && p.kind === kind && Math.abs(p.price - price) < 0.01) {
+            var pEpoch = (p.signalEpoch !== undefined && p.signalEpoch !== null) ? p.signalEpoch : dateTimeToEpochApprox(String(p.sdate), p.stime);
+            if (Math.abs(thisEpoch - pEpoch) <= DUP_SIGNAL_TIME_TOLERANCE_SEC) return p;
+        }
+    }
+    return null;
+}
+// [2026-08-13 리팩터] processLiveBar/processRealtimeOnlyBar(실시간)와
+// Main_OnRcvChartEx(워밍업/재조회) 등록경로 모두 이 함수 하나만 거치도록 통일.
+// [근본수정: 단일 진실원] 신호 객체 생성 + REGISTERED 이력 기록을 이 함수
+// 하나로 통일. trial(즉시판정) 경로와 registerPendingSignal(대기등록)
+// 경로가 반드시 이 함수만 거치도록 해서 케이스별 누락/정책불일치가
+// 구조적으로 재발하지 않게 한다. registeredWhen: trial 경로는 신호 자체
+// 봉시각을, registerPendingSignal 경로는 nowServerTimeStr()(현재
+// 처리시각)를 넘긴다.
+function buildNewSignalObject(itemName, tf, kind, sdate, stime, price, period, signalBarCount, initialBarsElapsed, registeredWhen, source, leftFlatStar, trueSdate, trueStime) {
+    var regWhenForHistory = registeredWhen || (sdate + " " + stime);
+    // [2026-09-02][등록경로 태그 보완] 2안과 동일 패턴 - 웜업(WARM)/실시간(REAL)
+    // 등록경로를 stateHistory[0]에 즉시 남긴다.
+    var sourceTag = source ? "[" + source + "]" : "";
+    return {
+        itemName: itemName, tf: tf, kind: kind, sdate: sdate, stime: stime, price: price,
+        isBull: kind.indexOf("BULL") === 0, state: "WAITING", period: period,
+        signalBarCount: signalBarCount, barsElapsedSinceRegistration: (initialBarsElapsed || 0),
+        // [신규][2026-09-07][일관성 - 판정/철회에도 신호세기 기반 확인단계
+        // 적용하려면 이 값이 신호 객체 자체에 남아있어야 한다](2안/2+1안과 동일)
+        leftFlatStar: leftFlatStar || 0,
+        lastAppliedBarEpoch: null,
+        // [신규][2026-09-25][카운팅커서/판정커서 분리] resolveHistorically
+        // 전용 판정커서 - null이면 signalEpoch부터 다시 판정을 시도한다
+        // (기존 신호 복원시 이 필드가 없으면 자동으로 이 폴백이 걸려서,
+        // 과거에 lastAppliedBarEpoch만으로 인해 재판정을 놓쳤던 신호도
+        // 다음 재워밍업에서 처음부터 다시 판정된다).
+        lastJudgedBarEpoch: null,
+        // [긴급수정][2026-09-07][백데이팅과 게이트카운트 혼용 버그](2안/2+1안과
+        // 동일 원인/동일 수정) 되짚기(sdate/stime, 화면표시/중복방지 전용)를
+        // 게이트(signalEpoch) 계산에도 그대로 써버린 게 버그였다 - 반드시
+        // trueSdate/trueStime(백데이팅 안 된 진짜 삼각형완성 시각)으로 계산.
+        signalEpoch: dateTimeToEpochApprox(String(trueSdate || sdate), trueStime || stime), registeredAt: Date.now(),
+        // [근본수정][2026-09-09][trueSdate/trueStime을 신호객체 필드로도
+        // 저장] signalEpoch 계산에만 쓰고 정작 객체 자체엔 안 남기고
+        // 있었다 - 그래서 isDuplicatePendingSignal이 이 값을 쓰도록
+        // 고쳐도(sg.trueSdate 참조) 항상 undefined라 실질적으로 무효였음.
+        trueSdate: trueSdate || sdate, trueStime: trueStime || stime,
+        lastCheckedAt: null, lastCheckedCycle: null,
+        lastCheckedReason: "1안:매사이클 전체재계산으로 추적(별도 실시간이벤트 없음)",
+        stateHistory: [{ t: formatHistoryWhen(regWhenForHistory), s: "REGISTERED(" + formatHistoryWhen(regWhenForHistory) + ")" + sourceTag + "@" + Number(price).toFixed(2) }],
+        _saveConfirmed: false
+    };
+}
+function registerPendingSignal(itemName, tf, kind, sdate, stime, price, period, signalBarCount, initialBarsElapsed, source, leftFlatStar, trueSdate, trueStime, preWalkedSig) {
+    if (isDuplicatePendingSignal(itemName, tf, kind, sdate, stime, price, trueSdate, trueStime)) { recordSuppressedDuplicate(itemName, tf, kind, sdate, stime, price, "DUP_AT_REGISTER", null); return false; }
+    // [근본수정][2026-09-10][2안 v1.07~v1.09 검증패턴 적용] registeredWhen을
+    // PC시계로 강제하지 않고 null로 넘겨서, buildNewSignalObject의 원래
+    // 폴백(신호형성시각=sdate+stime)이 자연스럽게 쓰이게 한다.
+    var regWhen = null;
+    var newSig = buildNewSignalObject(itemName, tf, kind, sdate, stime, price, period, signalBarCount, initialBarsElapsed, regWhen, source, leftFlatStar, trueSdate, trueStime);
+    // [근본수정][2026-09-14][initElapsed 재계산 방식의 상태불일치 버그 수정 -
+    // SP500과 동일] trialSig(이미 이 봉들을 하나하나 제대로 훑으며 state까지
+    // 정확히 갱신한 것)의 최종 상태를 재계산 없이 그대로 승격시킨다.
+    if (preWalkedSig) {
+        newSig.state = preWalkedSig.state;
+        newSig.barsElapsedSinceRegistration = preWalkedSig.barsElapsedSinceRegistration;
+        newSig.lastAppliedBarEpoch = preWalkedSig.lastAppliedBarEpoch;
+        newSig.lastJudgedBarEpoch = preWalkedSig.lastJudgedBarEpoch;
+        newSig.pullbackWhen = preWalkedSig.pullbackWhen;
+        newSig.pullbackPrice = preWalkedSig.pullbackPrice;
+        newSig._pullbackLogged = preWalkedSig._pullbackLogged;
+        if (preWalkedSig.stateHistory && preWalkedSig.stateHistory.length > 1) {
+            newSig.stateHistory = newSig.stateHistory.concat(preWalkedSig.stateHistory.slice(1));
+        }
+        newSig.gateCatchupBars = preWalkedSig.barsElapsedSinceRegistration;
+    }
+    // [근본수정][2026-09-10][저장예약(null) 표시 버그] regWhen=null은
+    // buildNewSignalObject 안에서만 의도된 값이다(그 안에서 폴백을 거쳐
+    // 신호형성시각으로 올바르게 대체됨) - 그런데 아래 SAVE_SCHEDULED
+    // 등 다른 곳에서 그 폴백 없이 regWhen(null)을 그대로 써서 상태이력에
+    // "저장예약(null)@가격"이 찍히는 버그가 있었음(실제 화면 확인 -
+    // 모든 신호에서 발생). 같은 폴백을 명시적으로 적용.
+    var regWhenFallback = sdate + " " + stime;
+    // [근본수정][2026-09-25][대시보드 missing 오판정] SAVE_SCHEDULED 파일줄의
+    // 7번째 필드(eventTime)에 여기서도 regWhenFallback(=봉 시각, sdate+stime)을
+    // 그대로 써왔는데, 대시보드는 이 필드를 "실제 등록된 벽시계 시각"으로
+    // 믿고 "하트비트가 이 시각 이후인데도 감시목록에 없으면 missing" 판정에
+    // 쓴다(yesspot_signals_dashboard.html effectiveAchieveStatus). WARM/
+    // 재조준처럼 sdate/stime이 과거 봉이면 이 필드도 과거가 되어, 등록
+    // 직후 첫 하트비트만으로도 "missing"(⚠️)으로 잘못 뜬다(REAL 경로는
+    // 봉시각≈현재라 우연히 안 드러났을 뿐). stateHistory 순서보장을 위해
+    // 도입했던 regWhenFallback(봉시각)은 그대로 두고, 파일에 실어보내는
+    // eventTime만 별도로 진짜 현재시각(nowServerTimeStr())을 쓴다.
+    var regWallClockNow = nowServerTimeStr();
+    // [근본수정][2026-09-07][파일쓰기 실패시 REGISTERED 줄이 영구유실되던
+    // 문제] 2안/2+1안과 동일 - 성공했을 때만 플래그를 세팅해두면(Excel에
+    // sig 전체가 그대로 저장되므로 이 플래그도 함께 보존됨), 재시작시 이
+    // 플래그가 없는 신호만 정확히 골라 REGISTERED 줄을 보완 재작성할 수 있다.
+    try {
+        timedPrintOnFile(OUTPUT_FILE, itemName + "," + tf + ",REGISTERED," + sdate + "," + stime + "," + Number(price).toFixed(2) + "," + (source || "") + "\n");
+        newSig._registeredLineWritten = true;
+    } catch (e) {}
+    pushStateHistory(newSig, regWhenFallback, "SAVE_SCHEDULED", price);
+    // [근본수정][2026-09-29][저장예약/확인이 모달에 영원히 안 보이던 버그,
+    // 사용자 실측지적: "신호등록만 있고 저장예약/저장확인이 없다, 이건
+    // 기본이다"] 대시보드(saveTrackingByPk)는 이 줄의 8번째 필드(진짜
+    // kind)로 조회키를 만드는데(2026-09-01에 그렇게 고쳐졌다고 주석까지
+    // 있었음), 정작 이 줄은 그 필드를 한 번도 실어보낸 적이 없었다 -
+    // 8번째 필드가 없으면 대시보드가 sig.kind(="SAVE_SCHEDULED"라는
+    // 이벤트 자기 이름)로 잘못 폴백해서 저장키가 실제 신호(예: BEAR1)
+    // 조회키와 영원히 안 맞았다(특정 신호만이 아니라 전체 신호 공통 결함
+    // - #주기/프레임밀림과는 무관함). 진짜 kind를 8번째 필드로 추가.
+    try { timedPrintOnFile(OUTPUT_FILE, itemName + "," + tf + ",SAVE_SCHEDULED," + sdate + "," + stime + "," + Number(price).toFixed(2) + "," + regWallClockNow + "," + kind + "\n"); } catch (e) {}
+    pendingSignals.push(newSig);
+    pendingStateDirty = true;
+    return true;
+}
+
+var targetList = [], currentIndex = 0;
+var currentLabel = "", currentFileLabel = "", currentItemName = "", currentCycle = 0, waitingForResponse = false;
+var achievedCount = 0, invalidCount = 0, pendingStateDirty = false;
+var totalTicksReceived = 0, totalBarsCompleted = 0, totalCyclesCompleted = 0, totalPassesCompleted = 0;
+var marketDataObj = null, lastTickEpoch = null;
+var requestQueue = [], activeRequestSeq = -1, requestSeq = 0;
+var retryAttemptsThisPass = {};
+var retryQueue = [], degradedPeriods = {}; // [2026-09-02][재시도보완] 분봉본과 동일 패턴
+var completedCycles = {};
+// [2026-09-25 신규][진행상황 로그 실제채움 기준 정정] completedCycles는
+// "더 이상 이번 순환에서 재요청 안 함"(성공했든 재시도소진 degraded로
+// 포기했든 둘 다 포함)만 뜻해서, 여기 길이를 그대로 "[진행상황] N/M
+// 완료(실제 채워진 개수 기준)"에 썼더니 degraded로 포기한(빈 계산기로
+// 콜드시딩된) 타임프레임까지 "채워짐"으로 잡혀 실제와 다른 숫자가 찍히는
+// 문제가 확인됨(사용자 지적 + 재현 테스트로 검증됨). filledCycles는
+// 실제로 재조회 데이터를 받아 처리한(Main_OnRcvChartEx 성공 경로) 사이클만
+// true로 남긴다 - recordFailureForRetry의 degraded 분기에서는 절대 안 채움.
+var filledCycles = {};
+var baseTargetList = []; // [2026-09-02][재시도보완] 재시도로 늘어난 targetList를 매 순환마다 원본으로 복원
+// [2026-08-11 버그수정] 단일변수 → 큐(배열). 페이싱이 0ms까지 내려가면
+// 이전 사이클의 300ms 지연삭제 타이머가 돌기 전에 다음 사이클 응답이
+// 도착해서 단일변수를 덮어쓰는 바람에 이전 차트객체가 영원히 안 지워지는
+// 결함이 있었음. 이제는 예약된 모든 객체를 배열에 쌓아두고 타이머 발동
+// 시 전량 순회 삭제한다.
+var pendingRemoveObjects = [];
+// [신규][2026-09-09][예스스탁 벤더답변 반영 - 삭제~다음요청 최소대기]
+// "삭제 호출은 확실히 했다"와 "플랫폼이 그 삭제를 실제로 끝냈다"는
+// 다른 문제다 - 시뮬레이션으로 확인: 삭제 호출 직후(0ms) 바로 다음
+// 요청을 보내면, 방금 지운 객체의 지각응답이 새 요청의 응답으로
+// 오인되어 엉뚱한 타임프레임에 잘못된 데이터가 등록될 수 있음이
+// 재현됐다. 벤더 권장대로 삭제 호출 후 최소 REMOVE_TO_NEXT_REQUEST_MIN_MS
+// (1000ms)가 지나기 전에는 다음 요청을 보내지 않는다.
+var REMOVE_TO_NEXT_REQUEST_MIN_MS = 1000;
+var lastRemoveObjectAt = 0;
+
+var realtimeOnlyBuilders = {};
+var realtimeOnlyCalcs = {};
+(function () {
+    for (var t = REALTIME_ONLY_START; t <= REALTIME_ONLY_END; t += 5) {
+        realtimeOnlyBuilders[t] = new TickBarBuilder(t);
+        realtimeOnlyCalcs[t] = new SignalCalculator();
+    }
+})();
+var liveBuilders = {}, liveCalcs = {};
+// [신규][2026-09-14][진입 다음봉 재확인 - 휩쏘 자동철회] label(fileLabel) -> 방금
+// 등록된 신호 1건의 신원(dir/sdate/stime/price/kind). processLiveBar/
+// processRealtimeOnlyBar 양쪽이 공유한다(같은 기간에 한쪽만 실제로 동작하는
+// 구조라 충돌 가능성은 낮음). 다음 완결봉 때 딱 한 번만 확인하고 지워진다.
+// [제거][사용자 요청][철회기능 전체 제거] entryConfirmWatch(휩쏘 자동철회용) 삭제됨
+(function () {
+    for (var t = START_CYCLE; t <= END_CYCLE; t += 5) {
+        liveBuilders[t] = new TickBarBuilder(t);
+        liveCalcs[t] = new SignalCalculator();
+    }
+})();
+// [원상복구][2026-09-07][확인단계 노이즈필터링 제거](2안/2+1안과 동일 원인)
+// 삼각형 완성 직후 자연스러운 되돌림까지 "노이즈"로 오판해서 원본이라면
+// 정상 등록했을 신호를 놓치는 문제가 실행검증으로 확인됐다. 원본과
+// 동일하게 삼각형 완성 즉시 등록하는 방식으로 되돌린다.
+// [2026-09-14][죽은코드 제거] pendingConfirmation/checkPendingConfirmation은
+// 아래 어디서도 호출되지 않는 완전한 죽은 코드였고(finalizeSignalRegistration을
+// 직접 호출하는 방식으로 이미 대체됨), requiredConfirmBars/advanceConfirmationCounter도
+// 항상 즉시확정만 반환해 "pending" 경로가 도달 불가능했다 - 전부 제거.
+// [제거][사용자 요청][검증완료] loggedRejectedCandidates/LOGGED_REJECTED_MAX
+// 삭제됨 - 어디서도 읽거나 채우는 코드가 없어서 선언만 있던 상태.
+function finalizeSignalRegistration(sg, fileLabel, period, barCount, isRealtimeOnly) {
+    if (isRealtimeOnly) { if (isNearDuplicateRealtime(currentItemName || INSTRUMENT_NAME, fileLabel, sg.kind, sg.price, barCount)) return null; }
+    else { if (isDuplicatePendingSignal(currentItemName || INSTRUMENT_NAME, fileLabel, sg.kind, sg.sdate, sg.stime, sg.price, sg.trueSdate, sg.trueStime)) return null; }
+    var canonicalMatch = findPendingMatch(currentItemName || INSTRUMENT_NAME, fileLabel, sg.kind, sg.sdate, sg.stime, sg.price);
+    var writeSdate = canonicalMatch ? canonicalMatch.sdate : sg.sdate;
+    var writeStime = canonicalMatch ? canonicalMatch.stime : sg.stime;
+    var ln = buildSignalLine(currentItemName || INSTRUMENT_NAME, fileLabel, sg.kind, writeSdate, writeStime, sg.price, sg.leftFlatStar, null, ((sg.apexSdate || "") + " " + (sg.apexStime || "")).trim(), sg.apexHeight, sg.leftFlatRun, sg.apexSharp, sg.isPrettyTriangle);
+    if (ln) {
+        writeLinesToFile([ln]);
+        var registeredNow = registerPendingSignal(currentItemName || INSTRUMENT_NAME, fileLabel, sg.kind, writeSdate, writeStime, sg.price, period, barCount, 0, "REAL", sg.leftFlatStar, sg.trueSdate, sg.trueStime);
+        // [신규][2026-09-14][진입 다음봉 재확인용] 등록 성공시에만 실제 파일기록
+        // 신원을 돌려준다 - 기존 호출부(반환값 무시)는 전혀 영향 없음.
+        if (registeredNow) { scheduleQuickSave(); return { sdate: writeSdate, stime: writeStime, price: sg.price, kind: sg.kind }; }
+    }
+    return null;
+}
+// [원상복구][2026-09-07][확인단계 대기열 구조 완전 제거] required=0으로만
+// 바꿔도 checkPendingConfirmation이 "새 후보를 큐에 넣기 전"에 먼저
+// 실행되는 구조라 최소 1봉 지연이 구조적으로 남는다 - 원본처럼 삼각형
+// 완성 즉시(그 봉 안에서) 등록되도록 대기열 없이 바로 확정한다.
+function processLiveBar(period, high, low, sdate, stime) {
+    var label = formatLabel(period);
+    var barEpochNow = dateTimeToEpochApprox(String(sdate), stime);
+    // [신규][2026-09-29][게이트 신뢰성 안전장치] 이 타임프레임의 "방금 전
+    // 실측 봉간격"을 기록한다 - 워밍업 일괄재생(resolveHistorically)이
+    // 아니라 실시간으로 진짜 완결된 봉만 기준으로 삼아야 그 순간의 실제
+    // 거래속도(활발/한산 무관)를 정확히 반영한다.
+    recordRealBarInterval(label, barEpochNow);
+    pendingSignals.forEach(function (s) {
+        if (s.tf === label) {
+            var _gOld = s.barsElapsedSinceRegistration || 0;
+            s.barsElapsedSinceRegistration = (s.barsElapsedSinceRegistration || 0) + 1;
+            if (_gOld < REQUIRED_BAR_DELAY && s.barsElapsedSinceRegistration >= REQUIRED_BAR_DELAY) logGateOpenOnce(s, "REAL", sdate + " " + stime, high, low, s.barsElapsedSinceRegistration); // [게이트 열림 봉 이력]
+            s._liveBars = (s._liveBars || 0) + 1;
+            s.lastAppliedBarEpoch = barEpochNow;
+            // [근본수정][2026-09-26][v5.4][실시간-재워밍업 인수인계 중복이력]
+            // Node.js 샌드박스 테스트로 실제 재현(분봉과 동일 결함) - 이 자리에서
+            // lastAppliedBarEpoch(카운팅 커서)만 전진시키고 lastJudgedBarEpoch
+            // (판정 커서)는 그대로 둬서, 실시간으로 이미 눌림/대기 전환까지
+            // 반영된 신호가 재워밍업을 맞으면 resolveHistorically가 signalEpoch
+            // 부터 전체 봉 역사를 처음부터 다시 재생 - 게이트 카운트는
+            // countedFromEpoch 덕에 중복 안 되지만, 상태전이 stateHistory
+            // 줄이 다시 찍혀 "전체 상태이력" 모달에 같은 단계가 중복 노출됨
+            // (최종판정 자체는 sig.state가 이미 전진해있어 안전, 결과는 안
+            // 틀리지만 이력이 지저분해짐). 카운팅 커서와 동일 시점에 판정
+            // 커서도 함께 전진시켜 중복 재생을 막는다.
+            s.lastJudgedBarEpoch = barEpochNow;
+        }
+    });
+    var calc = liveCalcs[period];
+    if (!calc) return;
+
+    var sigs = calc.onBar(high, low, sdate, stime);
+    // [제거][사용자 요청][철회기능 전체 제거] entryConfirmWatch 조회/삭제 +
+    // 휩쏘철회(retractWhipsawEntry) 호출 블록을 삭제함.
+
+    if (sigs.length > 0) {
+        sigs.forEach(function (sg) {
+            finalizeSignalRegistration(sg, label, period, calc.barCount, false);
+        });
+    }
+    // [신규][2026-09-26][흰다이아몬드] calc.onBar 호출 한 번마다(신규 순회 없음)
+    // 이번에 N봉을 다 채워 확정된 오른쪽 구름대 판정이 있으면 그대로 파일에 남긴다.
+    writePretty2Events(INSTRUMENT_NAME, label, calc.drainPretty2Events());
+}
+function processRealtimeOnlyBar(period, high, low, sdate, stime) {
+    totalBarsCompleted++;
+    var calc = realtimeOnlyCalcs[period];
+    if (!calc) return;
+    var label = formatLabel(period);
+    pendingSignals.forEach(function (s) {
+        if (s.period === period) {
+            var _gOld = s.barsElapsedSinceRegistration || 0;
+            s.barsElapsedSinceRegistration = (s.barsElapsedSinceRegistration || 0) + 1;
+            if (_gOld < REQUIRED_BAR_DELAY && s.barsElapsedSinceRegistration >= REQUIRED_BAR_DELAY) logGateOpenOnce(s, "REAL", sdate + " " + stime, high, low, s.barsElapsedSinceRegistration); // [게이트 열림 봉 이력]
+            s._liveBars = (s._liveBars || 0) + 1;
+            s.lastAppliedBarEpoch = dateTimeToEpochApprox(String(sdate), stime);
+            s.lastCheckedAt = sdate + " " + stime;
+            s.lastCheckedReason = "REALTIME_ONLY_UNVERIFIABLE(exceeds 1000 ticks, gate at " + s.barsElapsedSinceRegistration + "/" + REQUIRED_BAR_DELAY + ")";
+        }
+    });
+
+    var sigs = calc.onBar(high, low, sdate, stime);
+    // [제거][사용자 요청][철회기능 전체 제거] entryConfirmWatch 조회/삭제 +
+    // 휩쏘철회(retractWhipsawEntry) 호출 블록을 삭제함.
+
+    if (sigs.length > 0) {
+        sigs.forEach(function (sg) {
+            finalizeSignalRegistration(sg, label, period, calc.barCount, true);
+        });
+    }
+    // [신규][2026-09-26][흰다이아몬드] 1000틱 초과 구간도 동일 calc.onBar 재사용.
+    writePretty2Events(INSTRUMENT_NAME, label, calc.drainPretty2Events());
+}
+
+// [제거][사용자 요청][철회기능 전체 제거] entryConfirmWatch 변수 및
+// retractWhipsawEntry(휩쏘 자동철회 본체) 함수 삭제됨.
+
+function buildTargetList() {
+    var list = [];
+    for (var t = START_CYCLE; t <= END_CYCLE; t += 5) list.push({ code: MARKET_DATA_CODE, nameEn: INSTRUMENT_NAME, cycle: t });
+    return list;
+}
+// [2026-09-02][재시도보완] 분봉본과 동일 패턴 - 실패한 타임프레임을 이번
+// 순환 안에서 재시도큐에 넣어 곧바로 재시도, 소진되면 degradedPeriods로
+// 표시(다음 순환에서 retryAttemptsThisPass가 초기화되며 계속 재시도됨).
+var degradedNewThisPass = []; // [v5.22] 이번 순환에서 재시도를 다 쓰고 저품질로 확정된 라벨(순환 끝에 한 번에 알림)
+function recordFailureForRetry(target) {
+    var fileLabel = formatLabel(target.cycle);
+    var attempts = retryAttemptsThisPass[fileLabel] || 0;
+    if (attempts < MAX_RETRY_ATTEMPTS_PER_PASS) {
+        retryAttemptsThisPass[fileLabel] = attempts + 1;
+        retryQueue.push(target);
+    } else {
+        // [2026-09-02][콜드스타트 보완] 분봉본과 동일 패턴(틱빌더로 시딩)
+        if (!liveCalcs[target.cycle]) {
+            liveBuilders[target.cycle] = new TickBarBuilder(target.cycle);
+            liveCalcs[target.cycle] = new SignalCalculator();
+            logDiagnostic("[DIAG][DEGRADED_COLDSTART] label=" + fileLabel + " 실시간계산기 콜드시딩(웜업복구 전까지 임시)");
+        }
+        degradedPeriods[fileLabel] = true;
+        completedCycles[target.cycle] = true;
+        logMsg("  !! [" + fileLabel + "] " + MAX_RETRY_ATTEMPTS_PER_PASS + "회 즉시재시도 전부 실패 - 이번 순환은 저품질(degraded), 다음 순환에서 재시도");
+        // [신규][2026-09-25][대시보드 모달 알림] 화면(MessageLog)에만 남기던
+        // 걸 신호파일에도 남겨서 bridge_signals.py/대시보드가 실시간으로
+        // 알 수 있게 한다. 형식: item,fileLabel,DEGRADED_DEFERRED,date,time,cycle,재시도횟수
+        // [수정][2026-10-01][v5.22] 프레임마다 DEGRADED_DEFERRED 줄을 따로 보내던 것을 없애고, 이번 순환에서 저품질로 확정된 라벨만 모아뒀다가
+        // 순환 끝(재시도까지 다 끝난 시점)에 한 줄로 보낸다(아래 degradedNewThisPass 처리 참고). 예전 형식(프레임당 1줄)은 대시보드/브릿지가 계속 읽을 수는 있다.
+        if (degradedNewThisPass.indexOf(fileLabel) === -1) degradedNewThisPass.push(fileLabel);
+    }
+}
+
+var QUICK_SAVE_DEBOUNCE_MS = 2000, quickSaveScheduled = false;
+function scheduleQuickSave() { } // [v5.30_텍스트] 저장 없음 -> 저장 타이머 안 씀
+function savePendingState() { } // [v5.30_텍스트] 저장 없음 -> SAVE_CONFIRMED(저장확인) 마커를 내보내지 않는다(거짓 표시 방지)
+function loadPendingState() {
+    if (RESET_PENDING_STATE_ON_START) {
+        // [제거][사용자 요청][검증완료] wipedForRestoreCandidates 삭제됨 -
+        // 값을 담기만 하고 그 이후 한 번도 안 읽힘(예전에 철회블랙리스트에
+        // 넘기던 변수였는데, 그 기능 자체를 이미 제거해서 고아가 됨).
+        try {
+            loadPendingStateText();
+            if (pendingSignals.length > 0) {
+                var wipeWhen = msToDateTimeStr(Date.now());
+                pendingSignals.forEach(function (s) {
+                    try {
+                        var pk = pkOf(s);
+                        timedPrintOnFile(OUTPUT_FILE, s.itemName + "," + s.tf + ",REMOVAL_LOG," + s.sdate + "," + s.stime + "," + Number(s.price).toFixed(2) + ",RESET_WIPED," + pk + ",SCRIPT_RESTART_WITH_RESET_TRUE(PC_TIME " + wipeWhen + ")\n");
+                    } catch (e2) {}
+                });
+            }
+        } catch (e) {}
+        // [2026-09-14][철회후보 풀 기능 전체 제거로 이 경로 단순화] 예전엔
+        // 여기서 철회후보 풀(retractionCandidates)도 같이 비웠는데, 그 기능
+        // 자체(addRetractionCandidate/checkAndConsumeRestoration)를 사용자
+        // 요청으로 완전히 제거했으므로 더 이상 비울 대상이 없다.
+        pendingSignals = [];
+        seenKeys = {}; seenKeysByPrice = {};
+        logMsg("!! [초기화] 감시목록 저장소를 비웠습니다(철회후보 풀 포함 전체 초기화)."); return;
+    }
+    loadPendingStateText();
+}
+
+function Main_OnStart() {
+    scriptStartTime = Date.now();
+    var d0 = new Date(scriptStartTime);
+    scriptStartTimeStr = d0.getFullYear() + "-" + ("0" + (d0.getMonth() + 1)).slice(-2) + "-" + ("0" + d0.getDate()).slice(-2) + " " + ("0" + d0.getHours()).slice(-2) + ":" + ("0" + d0.getMinutes()).slice(-2) + ":" + ("0" + d0.getSeconds()).slice(-2);
+    // [근본수정][2026-09-04][정지->재시작 상태오염 방지] 실제 시뮬레이션으로
+    // 재현/확정된 문제: "정지"가 엔진에서 타이머를 확실히 다 죽여준다는
+    // 보장이 없는 채로 Main_OnStart가 다시 호출되면, 정지 전 요청이
+    // requestQueue에 그대로 남아있는 상태에서 새 요청이 추가로 쌓여
+    // 큐가 오염되고, 정지 전 옛 타임아웃 타이머(2번)가 뒤늦게 발동하면
+    // 방금 재시작해서 정상 진행 중이던 새 요청을 엉뚱하게 조기취소시켜
+    // currentIndex가 의도치 않게 튀는 것을 실행으로 확인했다. 재시작
+    // 시점에 쓰는 모든 타이머를 강제로 죽이고, 요청 관련 전역상태를
+    // 명시적으로 초기화해서, 엔진이 정지시 타이머를 안 죽여줘도
+    // 안전하게 깨끗한 상태에서 새로 시작하도록 방어한다.
+    for (var killTid = 1; killTid <= 10; killTid++) { try { Main.KillTimer(killTid); } catch (eKill) {} }
+    requestQueue = []; requestSeq = 0; activeRequestSeq = -1; waitingForResponse = false;
+    pendingRemoveObjects = []; retryQueue = []; retryAttemptsThisPass = {};
+    totalPassesCompleted = 0; currentIndex = 0;
+    loadPendingState();
+    logMsg("▶ [1안:삭제후재워밍업] 신호검색을 시작합니다...(틱봉 " + START_CYCLE + "~" + END_CYCLE + ", " + Math.floor((END_CYCLE - START_CYCLE) / 5 + 1) + "개 타임프레임 순환)");
+    try { Main.ReqMarketData(MARKET_DATA_CODE, 0); logMsg("[가격감시] " + MARKET_DATA_CODE + " 실시간 시세구독 시작"); } catch (e) {}
+    targetList = buildTargetList();
+    baseTargetList = targetList; // [2026-09-02][재시도보완]
+    currentIndex = 0;
+    processNext();
+    // [근본수정][2026-09-03] 하트비트는 이제 processNext()가 최초 1바퀴
+    // 완료를 확인한 시점에 스스로 무장한다(워밍업 완료 전 조기시작 방지).
+    Main.SetTimer(5, REMOVE_OBJECT_DELAY_MS); // [2026-08-13 안전성수정] 독립된 고정주기 삭제타이머 최초 무장(이후 자체 재무장)
+    Main.SetTimer(6, DEGRADED_RECOVERY_INTERVAL_MS); // [2026-09-02][degraded복구 보완]
+}
+
+function processNext() {
+    // [2026-09-02 근본수정][예스스탁 공식답변 반영 - 삭제/재요청 순서보장]
+    // 삭제타이머(nEventID=5)가 요청 사이클과 완전히 독립적으로 자체
+    // 재무장하도록 바꾼 뒤(2026-08-13, 삭제가 영원히 안 불릴 위험 방지),
+    // 그 대가로 "다음 요청이 나가는 시점에 직전 차트객체가 아직 안
+    // 지워진 채로 남아있을 수 있는" 새 위험이 생겼다 - 예스스탁 공식
+    // 답변("삭제와 재요청 순서를 확실히 분리하라")과 정확히 일치하는
+    // 문제로, 서로 다른 타임프레임에 동일한 가짜 가격의 신호가 동시에
+    // 등록되는 사고로 재현 확인됨. 다음 요청을 보내기 직전에 매번 밀린
+    // 삭제큐부터 먼저 확실히 비워서, "요청이 나갈 때는 항상 직전 객체가
+    // 이미 지워진 상태"를 보장한다 - 원래 목적(삭제 무한지연 방지)은
+    // 독립 타이머(nEventID=5)가 그대로 안전망으로 남아있어 훼손되지 않는다.
+    if (pendingRemoveObjects.length > 0) {
+        var objectsToRemoveNow = pendingRemoveObjects;
+        pendingRemoveObjects = [];
+        for (var riN = 0; riN < objectsToRemoveNow.length; riN++) {
+            try { Main.RemoveObject(objectsToRemoveNow[riN]); }
+            catch (e) { logDiagnostic("[DIAG][REMOVE_OBJECT_FAILED] " + e.message); }
+        }
+        lastRemoveObjectAt = Date.now();
+    }
+    // [신규][2026-09-09][삭제~다음요청 최소대기 강제] 방금 삭제를 실행했든
+    // 이전 사이클에서 실행했든, 마지막 삭제로부터 REMOVE_TO_NEXT_REQUEST_MIN_MS
+    // 가 아직 안 지났으면 여기서 멈추고 남은 시간만큼 기다렸다가 이
+    // 함수를 다시 부른다(요청은 안 보냄). nEventID=7 전용 타이머 사용.
+    if (lastRemoveObjectAt > 0) {
+        var sinceRemoveMs = Date.now() - lastRemoveObjectAt;
+        if (sinceRemoveMs < REMOVE_TO_NEXT_REQUEST_MIN_MS) {
+            Main.SetTimer(7, REMOVE_TO_NEXT_REQUEST_MIN_MS - sinceRemoveMs);
+            return;
+        }
+    }
+    if (currentIndex >= targetList.length) {
+        // [근본수정][2026-09-25][v5.1][재시도큐 잔존(stale) 엔트리 정리]
+        // completedCycles[cycle]이 참이면 push 시점에 건너뛰도록 이미
+        // 고쳤지만(재조준 분기), 그건 "이 cycle을 큐에 넣으려는 바로 그
+        // 순간" 기준일 뿐이다 - 어떤 cycle X가 이번 패스 앞쪽에서 먼저
+        // 실패해 큐에 들어간 "뒤에", 완전히 다른 요청이 재조준되어 X를
+        // 채워버리면(completedCycles[X]=true), 이미 큐에 들어가 있던 X의
+        // 엔트리는 그대로 남아있었다(등록 당시엔 정당한 실패였으므로) -
+        // 그래서 [진행상황] 분자(filledCycles)와 "실패했던 N개 재시도"
+        // 숫자가 여전히 앞뒤가 안 맞아 보이는 원인이었다(사용자 재확인).
+        // 큐를 실제로 소비하기 직전에 한 번 더 걸러서, 그 사이 다른
+        // 경로로 이미 채워진 cycle은 재시도 없이 조용히 제외한다(그
+        // cycle은 이미 정상적으로 filledCycles에 반영돼있으므로 데이터
+        // 유실 없음).
+        retryQueue = retryQueue.filter(function (t) { return !completedCycles[t.cycle]; });
+        if (retryQueue.length > 0) {
+            logMsg("? [1안] 실패했던 " + retryQueue.length + "개 타임프레임 이번 순환 안에서 재시도합니다...");
+            targetList = targetList.concat(retryQueue);
+            retryQueue = [];
+        } else {
+            currentIndex = 0;
+            totalPassesCompleted++;
+            retryAttemptsThisPass = {}; // [2026-09-02][재시도보완] 순환마다 초기화
+            var degradedList = Object.keys(degradedPeriods);
+            // [근본수정][2026-09-25][v5.2][순환완료 집계 명시] "저품질 유지중"
+            // 로그는 degradedList.length>0일 때만 찍혀서, 화면 스크롤/캡처에서
+            // 그 줄을 놓치면 분자(filledCycles)와 총원 사이 나머지가 어디로
+            // 갔는지 확인할 길이 없다는 지적(반복) - filledCycles를 초기화
+            // 하기 "전에" 최종 집계를 먼저 구해서, 순환완료 로그 자체에
+            // "실제수신 X + 저품질 Y = 총Z"를 항상 박아넣는다(저품질 0개여도
+            // 표시) - 이 한 줄만 봐도 산수가 맞는지 바로 검증 가능해짐.
+            var _finalFilledCount = Object.keys(filledCycles).length;
+            var _finalDegradedCount = degradedList.length;
+            if (degradedList.length > 0) logMsg("!! [1안] " + degradedList.length + "개 타임프레임 저품질(degraded) 유지중: " + degradedList.join(", "));
+            // [신규][2026-10-01][v5.22] 이번 순환에서 새로 저품질로 확정된 프레임을 대시보드 알림용으로 한 줄에 모아서 보낸다.
+            // 형식: item,첫라벨,DEGRADED_DEFERRED,date,time,개수,재시도횟수,라벨1|라벨2|... (8번째 필드가 있으면 묶음 줄)
+            if (degradedNewThisPass.length > 0) {
+                try {
+                    var degWhenParts = nowServerTimeStr().split(" ");
+                    timedPrintOnFile(OUTPUT_FILE, (currentItemName || INSTRUMENT_NAME) + "," + degradedNewThisPass[0] + ",DEGRADED_DEFERRED," + degWhenParts[0] + "," + degWhenParts[1] + "," + degradedNewThisPass.length + "," + MAX_RETRY_ATTEMPTS_PER_PASS + "," + degradedNewThisPass.join("|") + "\n");
+                } catch (eDeg) {}
+                degradedNewThisPass = [];
+            }
+            targetList = baseTargetList; // [2026-09-02][재시도보완] 재시도로 늘어났던 targetList 원복
+            completedCycles = {};
+            filledCycles = {}; // [2026-09-25 신규] 새 순환 시작이니 실제채움 카운터도 같이 초기화
+            logMsg("★ [" + totalPassesCompleted + "번째 순환 완료] " + baseTargetList.length + "개 타임프레임 전부 재조회+재계산 끝(실제수신 " + _finalFilledCount + " + 저품질 " + _finalDegradedCount + " = " + (_finalFilledCount + _finalDegradedCount) + ") - 처음부터 다시 순환합니다.");
+            // [근본수정][2026-09-03][워밍업 미완료 상태에서 하트비트 조기시작]
+            // 예전엔 Main_OnStart가 processNext() 호출 직후 곧바로 하트비트
+            // 타이머를 무장해서, 워밍업이 채 끝나기도 전에 하트비트 줄이
+            // 나가기 시작했다(워밍업을 안 하고 하트비트로 바로 나오는 것처럼
+            // 보이는 원인). 최초 1바퀴(전체 타임프레임) 완료 시점에만 여기서
+            // 하트비트를 시작한다.
+            if (totalPassesCompleted === 1) {
+                Main.SetTimer(4, HEARTBEAT_INTERVAL_MS);
+                logMsg("? [워밍업 완료] 이제부터 하트비트를 시작합니다.");
+            }
+        }
+    }
+    var target = targetList[currentIndex];
+    if (completedCycles[target.cycle]) {
+        currentIndex++;
+        Main.SetTimer(1, pacingMsCurrent);
+        return;
+    }
+    var fileLabel = formatLabel(target.cycle);
+    delete degradedRecoveryPending[fileLabel]; // [2026-09-02][degraded복구 보완]
+    var label = INSTRUMENT_TAG + " " + fileLabel;
+    currentLabel = label; currentFileLabel = fileLabel; currentCycle = target.cycle; currentItemName = target.nameEn; waitingForResponse = true;
+    logDiagnostic("[DIAG][REQUEST_SENT] [" + (currentIndex + 1) + "/" + targetList.length + "] " + label + " 요청 중... (페이싱=" + pacingMsCurrent + "ms)");
+    try {
+        var reqCount = computeAdaptiveRequestCount(target.cycle, fileLabel);
+        // [예스스팟 예시 문법] new ReqChartItem(code, cycle, period, count, countKind)
+        var req = new ReqChartItem(target.code, target.cycle, CHART_PERIOD_TICK, reqCount, CHART_REQCOUNT_BAR);
+        // [신규][v4.5][프레임 밀림 감지용] "#주기" 커스텀 지표(예스스탁
+        // 지표편집기에 사전등록 필요: Plot1(DataCompress,"주기구분");
+        // Plot2(BarInterval,"세부주기");)를 같이 요청 - 응답이 실제로
+        // 몇 틱짜리인지 GetIndicatorData로 직접 확인 가능. GetCycle/
+        // GetPeriod가 이 플랫폼에 없어 그동안 사실상 미검증 상태였던
+        // 빈틈을 메운다.
+        var indSet = new Array(new IndicatorInfo("#주기"));
+        var ok = Main.ReqChartEx(req, null, indSet);
+        if (!ok) {
+            logDiagnostic("[DIAG][REQUEST_FAILED] label=" + fileLabel + " ReqChartEx가 false 반환");
+            recordFailureForRetry(target);
+            pacingOnCycleFailure(); waitingForResponse = false; currentIndex++; Main.SetTimer(1, pacingMsCurrent); return;
+        }
+        requestSeq++; activeRequestSeq = requestSeq;
+        requestQueue.push({ seq: requestSeq, cycle: target.cycle, fileLabel: fileLabel, itemName: target.nameEn, count: reqCount, sentAt: Date.now() });
+        Main.SetTimer(2, REQUEST_TIMEOUT_MS);
+    } catch (e) {
+        logDiagnostic("[DIAG][REQUEST_EXCEPTION] label=" + fileLabel + " " + e.message);
+        recordFailureForRetry(target);
+        pacingOnCycleFailure(); waitingForResponse = false; currentIndex++; Main.SetTimer(1, pacingMsCurrent);
+    }
+}
+
+function Main_OnRcvChartEx(chartEx) {
+    if (requestQueue.length === 0) { pendingRemoveObjects.push(chartEx); return; } // [2026-09-02][누수수정] 대기요청 없이 온 응답도 객체는 삭제큐로
+    var matchedIdx = -1;
+    for (var qi = 0; qi < requestQueue.length; qi++) if (requestQueue[qi].seq === activeRequestSeq) { matchedIdx = qi; break; }
+    if (matchedIdx === -1 || !waitingForResponse) { requestQueue.shift(); pendingRemoveObjects.push(chartEx); return; } // [2026-09-02][누수수정] 지각응답(이미 타임아웃 처리됨)의 객체도 삭제큐로
+    // [근본수정][2026-09-10][지각응답(유령응답) 오귀속 - 실제 원인 확인 및 정식수정]
+    // chartEx.GetCode(1)/GetCycle(1)/GetPeriod(1)로 이 응답이 실제로 어느
+    // 종목코드·주기·구분(분/틱)의 데이터인지 확인해서, 지금 기다리는 요청
+    // (reqCtx)의 조건과 다르면 "타임아웃으로 이미 포기했던 요청의 지각응답
+    // (유령응답)"으로 보고 폐기하고 계속 기다린다(큐에서 먼저 꺼내지 않음
+    // - 유령응답이면 진짜 응답이 아직 큐에 남아있어야 함). 나스닥100
+    // 분봉 v2.3과 동일 수정.
+    var reqCtxPeek = requestQueue[matchedIdx];
+    // [제거][사용자 요청][유령응답 기능 전체 제거] GetCycle/GetPeriod가 이 플랫폼에 없어 항상 예외로 죽던 죽은 코드였음(검증 실행된 적 없음) - reqCtxPeek는 바로 아래 #주기 체크(frameShiftNote)에서 계속 쓰이므로 유지.
+    // [신규][v4.5][프레임 밀림 감지] GetCycle/GetPeriod가 이 플랫폼에
+    // 없어(위 catch로 항상 조용히 넘어감) 그동안 검증이 사실상 안 되고
+    // 있었다 - "#주기" 지표로 이 응답이 실제로 몇 틱짜리인지 확인해서,
+    // 지금 매칭된 자리(reqCtxPeek.cycle)와 다르면 밀림 의심 문구를
+    // 만들어둔다. 등록을 막지는 않음(구조를 안 바꿈, 사유 표시만 추가).
+    var frameShiftNote = "";
+    try {
+        var fsIndAvail = (typeof chartEx.GetIndicatorData === "function");
+        if (fsIndAvail) {
+            var fsRespCycle = chartEx.GetIndicatorData("#주기", 2, 0);
+            if (fsRespCycle !== null && fsRespCycle !== undefined && Number(fsRespCycle) !== Number(reqCtxPeek.cycle)) {
+                // [근본수정][2026-09-29][세미콜론 충돌로 저장예약/눌림확인 등
+                // 이후 이력이 통째로 사라지던 버그, 사용자 실측지적("#주기로
+                // 등록된 신호만 모달에 신호등록만 있고 나머지가 없다")] 이
+                // 문구가 HEARTBEAT의 pendingDetails(대시보드가 ";"로 서로 다른
+                // 신호를 구분)에 그대로 실려나가는데, "disp=X;actual=Y" 안의
+                // ";"가 그 구분자와 똑같아서 대시보드가 이 신호 하나의 이력을
+                // 거기서 통째로 잘라버렸다(Node.js로 실제 파싱 로직 그대로
+                // 재현 확인 - 잘린 뒤 "SAVE_SCHEDULED/PULLBACK_CONFIRMED..."는
+                // 엉뚱한 가짜 키로 떨어져나가 다시는 조회되지 않았음). 어떤
+                // 구분자(",", ";", "^", "|", "->") 와도 안 겹치는 "_"로 교체.
+                frameShiftNote = "[FRAME_SHIFT_SUSPECT:disp=" + reqCtxPeek.cycle + "_actual=" + fsRespCycle + "]"; // 영문/숫자 코드만 사용 - 한글표시는 대시보드에서만
+            }
+        }
+    } catch (eFs) {}
+    var reqCtx = requestQueue.splice(matchedIdx, 1)[0];
+    waitingForResponse = false; Main.KillTimer(2);
+    // [신규][2026-09-10][타임아웃 이후 정상매칭 추적 - 나스닥 분봉과 동일]
+    if (timeoutTrackedLabels[reqCtx.fileLabel]) {
+        delete timeoutTrackedLabels[reqCtx.fileLabel];
+    }
+    var thisCycle = reqCtx.cycle, thisItemName = reqCtx.itemName, thisFileLabel = reqCtx.fileLabel;
+    var thisReqCount = reqCtx.count || 5000;
+    // [신규][사용자 요청][검증완료][#주기 실제프레임으로 재조준] 실시간구독은
+    // ReqMarketData(종목코드만, 주기 파라미터 없음)로 서버가 그냥 틱을
+    // 밀어주는 구조라 밀림 여지가 구조적으로 없음(확인됨) - 반면 이
+    // ReqChartEx(워밍업/재워밍업) 경로만 요청-응답 매칭이 필요해서 밀림이
+    // 생김. frameShiftNote가 세팅됐고(#주기 불일치) 그 실제값이 우리가
+    // 추적하는 유효한 cycle(30~1000, 5틱단위)이면: 원래 요청했던
+    // thisCycle은 이 응답으로 해소된 게 아니므로 재시도큐로 보내고,
+    // 이후 처리(봉캐시/중복검사/신호등록/실시간이관 - liveCalcs/
+    // liveBuilders도 포함)는 전부 #주기가 알려준 진짜 cycle 기준으로
+    // 진행한다. currentIndex 전진은 이 함수 끝에서 thisCycle과 무관하게
+    // 무조건 1번만 일어나므로(디스패치가 이미 독립적으로 설계돼있음,
+    // 코드로 확인) 이 치환은 순환 진행(몇 번째 프레임 처리중인지)에
+    // 전혀 영향을 안 준다.
+    if (frameShiftNote && fsRespCycle >= START_CYCLE && fsRespCycle <= END_CYCLE && (fsRespCycle - START_CYCLE) % 5 === 0) {
+        // [근본수정][2026-09-25][종목이 늘어나면 응답이 뒤섞여 들어오는 구조 -
+        // 사용자 확인] 원래요청(thisCycle)이 이 응답 오기 "전에" 다른 뒤섞인
+        // 응답으로 이미 채워졌을 수 있다(completedCycles로 확인 가능) - 그런
+        // 경우까지 재시도큐에 또 넣으면 "실패했던 N개"가 실제로 아직 못
+        // 받은 개수보다 부풀려져 [진행상황] 분자(filledCycles)와 앞뒤가 안
+        // 맞는 것처럼 보이는 원인이 됨. 이미 완료된 cycle이면 재시도큐 생략.
+        if (!completedCycles[thisCycle]) {
+            recordFailureForRetry({ code: MARKET_DATA_CODE, nameEn: thisItemName, cycle: thisCycle });
+            logMsg("  ?? [프레임재조준] 요청cycle=" + thisCycle + "틱 -> #주기 실제값=" + fsRespCycle + "틱로 대체(원래 요청은 재시도큐행, 이 데이터는 실제 cycle에 정확히 반영됨)");
+        } else {
+            logMsg("  ?? [프레임재조준] 요청cycle=" + thisCycle + "틱 -> #주기 실제값=" + fsRespCycle + "틱로 대체(원요청은 이미 다른 응답으로 완료돼 재시도큐 생략)");
+        }
+        thisCycle = fsRespCycle;
+        thisFileLabel = formatLabel(fsRespCycle);
+    }
+
+    try {
+        var bars = [], lastValidBar = null;
+        function isIdxAvailable(probeIdx) { try { var ph = chartEx.GetHigh(1, probeIdx); return !(ph == null || ph == undefined) && isFinite(Number(ph)); } catch (e) { return false; } }
+        var actualCount = thisReqCount;
+        if (thisReqCount > 0 && !isIdxAvailable(thisReqCount - 1)) {
+            if (!isIdxAvailable(0)) actualCount = 0;
+            else { var lo = 0, hi = thisReqCount - 1; while (lo < hi) { var mid = Math.ceil((lo + hi) / 2); if (isIdxAvailable(mid)) lo = mid; else hi = mid - 1; } actualCount = lo + 1; }
+        }
+        logDiagnostic("[DIAG][ACTUAL_COUNT] label=" + thisFileLabel + " 요청=" + thisReqCount + " 실제수신=" + actualCount + (actualCount < thisReqCount ? " (요청량 미달)" : "(요청량 전부 받음)"));
+
+        for (var idx = actualCount - 1; idx >= 0; idx--) {
+            var h, l, sdateRaw, stimeRaw, hNum, lNum, isValidBar;
+            try {
+                h = chartEx.GetHigh(1, idx); l = chartEx.GetLow(1, idx);
+                sdateRaw = chartEx.GetSDate(1, idx); stimeRaw = formatTime(chartEx.GetSTime(1, idx));
+                hNum = Number(h); lNum = Number(l);
+                isValidBar = !(h == null || h == undefined || l == null || l == undefined) && isFinite(hNum) && isFinite(lNum) && hNum >= lNum;
+            } catch (e) { isValidBar = false; sdateRaw = lastValidBar ? lastValidBar.sdate : ""; stimeRaw = lastValidBar ? lastValidBar.stime : ""; }
+            if (!isValidBar) { if (lastValidBar) bars.push({ high: lastValidBar.high, low: lastValidBar.low, sdate: sdateRaw, stime: stimeRaw, filled: true }); continue; }
+            var newBar = { high: hNum, low: lNum, sdate: sdateRaw, stime: stimeRaw, filled: false };
+            bars.push(newBar); lastValidBar = newBar;
+        }
+
+        // [근본수정: 순서복원] 기존 대기신호 재판정을 신규신호 탐지/등록
+        // 보다 먼저 수행한다. 순서가 뒤바뀌어 있으면 신규신호를 먼저
+        // 등록한 뒤 같은 사이클에서 이 루프가 방금 등록한 신호까지 함께
+        // 재판정해, signalEpoch부터 다시 재생되며 눌림/대기 이력이 뒤섞여
+        // 붙는 문제가 생긴다. GATE_RESYNC(게이트 재동기화)는 신규/기존
+        // 구분 없이 여기서 동일하게 적용된다.
+        var completedBars = bars.slice(0, Math.max(0, bars.length - 1)); // [v5.17] 형성중일 수 있는 마지막 봉은 재판정/카운트 기준에서 제외(실시간 틱이 담당)
+        runPendingResolutionPass(
+            function (rsig) { return rsig.tf === thisFileLabel; },
+            function (rsig, resolvedLines, markExplained) {
+                try {
+                    var _b4 = rsig.state + "|" + (rsig.barsElapsedSinceRegistration || 0) + "|" + (rsig.stateHistory ? rsig.stateHistory.length : 0) + "|" + rsig.lastAppliedBarEpoch + "|" + rsig.lastJudgedBarEpoch;
+                    var _cntPre = rsig.barsElapsedSinceRegistration || 0;
+                    var rResult = resolveHistorically(rsig, completedBars);
+                    if (rResult) {
+                        var rKindLabel = (rResult.result === "ACHIEVED") ? "STATUS_ACHIEVED" : "STATUS_INVALID";
+                        if (rResult.result === "ACHIEVED") achievedCount++; else invalidCount++;
+                        var rAchievedField = buildAchievedField(rsig, rResult.sdate, rResult.stime);
+                        var rReasonField = buildResolvedReasonField(rsig, rResult.result, rResult.sdate + " " + rResult.stime, rsig.price);
+                        resolvedLines.push(rsig.itemName + "," + rsig.tf + "," + rKindLabel + "," + rsig.sdate + "," + rsig.stime + "," + rsig.price.toFixed(2) + "," + rAchievedField + "," + rReasonField + "," + rsig.kind);
+                        recordResolution(rsig.tf, rsig.kind, rsig.sdate, rsig.stime, rsig.price, rResult.result, rResult.sdate + " " + rResult.stime);
+                        logPendingRemoval(rsig, rResult.result, rReasonField);
+                        markExplained();
+                        return true;
+                    } else {
+                        var firstBarEpochNow = bars.length > 0 ? dateTimeToEpochApprox(String(bars[0].sdate), bars[0].stime) : null;
+                        if (firstBarEpochNow !== null && firstBarEpochNow <= rsig.signalEpoch) {
+                            syncGateCounter(rsig, completedBars, _cntPre);
+                        }
+                        // [수정][2026-09-29] 카운터/상태/커서가 실제로 바뀐 경우에만 저장대상으로 표시(변화 없는 재조회마다 저장하던 것 제거)
+                        var _af = rsig.state + "|" + (rsig.barsElapsedSinceRegistration || 0) + "|" + (rsig.stateHistory ? rsig.stateHistory.length : 0) + "|" + rsig.lastAppliedBarEpoch + "|" + rsig.lastJudgedBarEpoch;
+                        if (_af !== _b4) { pendingStateDirty = true; 0; }
+                        return false;
+                    }
+                } catch (e) { return false; }
+            },
+            "warmupResolve",
+            false // markDirtyOnKeep: resolveFn이 "미해결" 분기에서 이미 excelMarkDirty를 직접 호출함(중복방지)
+        );
+
+        // [2026-08-13 리팩터][입2개-소화기관1개] 신호감지(calc replay)를
+        // 먼저 하고, "신규등록"과 "판정"을 분리한다. 신규신호도 실시간
+        // 경로와 동일하게 감지->dedupe->registerPendingSignal 한 곳만
+        // 거치도록 통일했다 - 예전에는 여기서 sigObj를 직접 만들어
+        // resolveHistorically를 먼저 시도한 뒤 안 풀리면 그제서야
+        // registerPendingSignal을 부르는 별도 갈래가 있었다(등록 로직이
+        // 사실상 두 벌 존재). "이미 확보된 봉구간 안에서 곧바로 판정
+        // 가능한지"는 등록과 분리된 아래의 공용 판정패스가 신규/기존
+        // 구분 없이 전담한다.
+        // [신규][v5.17] 재조회 창이 이 프레임의 가장 오래된 감시신호를 못 덮으면(수신속도 추정 오차 등) 카운터 동기화와 안전망 재판정이
+        // 건너뛰어지므로, 다음 요청을 최대 크기로 받게 한다. 최대 크기로도 못 덮는 초장기 신호는 진단로그만 남기고 포기한다.
+        try {
+            if (windowCoversOldestSignal(thisFileLabel, bars)) { delete windowNeedsFull[thisFileLabel]; }
+            else if (thisReqCount < computeRequestCount(thisCycle)) { windowNeedsFull[thisFileLabel] = true; }
+            else {
+                delete windowNeedsFull[thisFileLabel];
+                if (!windowUncoverableLoggedAt[thisFileLabel] || (Date.now() - windowUncoverableLoggedAt[thisFileLabel]) > 3600000) {
+                    windowUncoverableLoggedAt[thisFileLabel] = Date.now();
+                    logDiagnostic("[DIAG][WINDOW_NOT_COVERING] label=" + thisFileLabel + " 요청=" + thisReqCount + " - 최대 크기로도 가장 오래된 감시신호(" + oldestPendingSignalEpoch(thisFileLabel) + ")를 못 덮음(카운터 동기화 불가)");
+                }
+            }
+        } catch (eCov) {}
+        var barsForCalc = completedBars;
+        // [신규][2026-09-05][차트정확도 검증] 1안은 무한재순환 자체가
+        // 재조회 역할을 겸하므로, 매 순환마다 선택된 프레임(틱봉 30단위:
+        // 30,60,90...990)만 최근 20봉을 직전 순환 값과 비교한다.
+        // [2026-09-07][5틱단위 일관성] 1안은 원래부터 t+=5(5틱단위)로
+        // 순환하는데, 이 체크주기는 10틱 기준 "3번째 프레임마다"였던
+        // %30을 그대로 쓰고 있었다. %30을 그대로 두면 5틱 스텝에서
+        // 새로 생기는 프레임들(T0035,T0045,T0055...)이 영원히 검증
+        // 안 되는 "신규값 누락" 문제가 있어 %15로 수정.
+        var isBarCheckFrame = (thisCycle % 15 === 0);
+        if (isBarCheckFrame && barsForCalc.length > 0) {
+            barCheckRoundCounter[thisFileLabel] = (barCheckRoundCounter[thisFileLabel] || 0) + 1;
+            var thisRound = barCheckRoundCounter[thisFileLabel];
+            var checkStartIdx = Math.max(0, barsForCalc.length - 20);
+            for (var bci = checkStartIdx; bci < barsForCalc.length; bci++) {
+                var cbar = barsForCalc[bci];
+                // [2026-09-14][min봉과 통일] filled(보간대체값)는 실제 관측값이
+                // 아니라 직전 정상봉을 그대로 복사한 임시값이라, BAR_MISMATCH
+                // 이력/다수결 투표 양쪽 모두에서 제외한다(원래는 이력에는 포함
+                // 됐었는데, 다수결 로직 도입에 맞춰 min봉과 같은 기준으로 통일).
+                if (cbar.filled) continue;
+                var bkey = thisFileLabel + "|" + cbar.sdate + "|" + cbar.stime;
+                var prevHist = barCheckHistory[bkey];
+                var lastEntry = prevHist && prevHist.length > 0 ? prevHist[prevHist.length - 1] : null;
+                var mismatch = lastEntry && (lastEntry.high !== cbar.high || lastEntry.low !== cbar.low);
+                var newEntry = { round: thisRound, checkedAt: nowServerTimeStr(), high: cbar.high, low: cbar.low };
+                if (!barCheckHistory[bkey]) barCheckHistory[bkey] = [];
+                barCheckHistory[bkey].push(newEntry);
+                if (barCheckHistory[bkey].length > 10) barCheckHistory[bkey].shift();
+                if (mismatch) {
+                }
+                // [신규][2026-09-14][방안1 - 다수결 합의] min봉 파일과 동일 -
+                // 2표 이상 반복된 값과 다르면 교체(격리)한다.
+                var bcHist = barCheckHistory[bkey];
+                var bcVoteMap = {};
+                for (var bcHi = 0; bcHi < bcHist.length; bcHi++) {
+                    var bcVoteKey = bcHist[bcHi].high + "|" + bcHist[bcHi].low;
+                    bcVoteMap[bcVoteKey] = (bcVoteMap[bcVoteKey] || 0) + 1;
+                }
+                var bcBestKey = null, bcBestCount = 0;
+                Object.keys(bcVoteMap).forEach(function (k) { if (bcVoteMap[k] > bcBestCount) { bcBestCount = bcVoteMap[k]; bcBestKey = k; } });
+                var bcCurrentKey = cbar.high + "|" + cbar.low;
+                if (bcBestCount >= 2 && bcBestKey !== bcCurrentKey) {
+                    var bcParts = bcBestKey.split("|");
+                    var bcConsensusHigh = Number(bcParts[0]), bcConsensusLow = Number(bcParts[1]);
+                    barQuarantineCounts[bkey] = (barQuarantineCounts[bkey] || 0) + 1;
+                    // [주의] 틱봉은 period가 "분"이 아니라 "틱개수"라 min봉처럼
+                    // 시간기반 마감시각 계산(형성중여부 진단)이 성립하지 않는다 -
+                    // 이 진단은 분봉 전용으로 남겨둔다.
+                    logDiagnostic("[DIAG][BAR_QUARANTINED] label=" + thisFileLabel + " sdate=" + cbar.sdate + " stime=" + cbar.stime +
+                        " received=" + cbar.high + "/" + cbar.low + " consensus(" + bcBestCount + "/" + bcHist.length + "표)=" + bcConsensusHigh + "/" + bcConsensusLow +
+                        " quarantineCount=" + barQuarantineCounts[bkey] + " -> 합의값으로 교체");
+                    cbar.high = bcConsensusHigh; cbar.low = bcConsensusLow;
+                    // [제거][v4.5][사용자 요청] 대시보드 알람 팝업(BAR_DATA_UNSTABLE_ALERT)만
+                    // 안 뜨게 함 - 위 다수결 합의값 교체(cbar.high/low 갱신)는
+                    // 그대로 유지, barQuarantineCounts 집계도 그대로 유지(내부
+                    // 참고용, 그냥 신호파일로 안 내보낼 뿐).
+                }
+            }
+        }
+        // [삭제][2026-09-29] 봉캐시 갱신/저장 블록 제거
+        var calc = new SignalCalculator();
+        var signals = [];
+        for (var bi = 0; bi < barsForCalc.length; bi++) {
+            var bar = barsForCalc[bi];
+            var sigs = calc.onBar(bar.high, bar.low, bar.sdate, bar.stime);
+            // [제거][사용자 요청][철회기능 전체 제거] 여기서 매 봉마다 evalSignal을
+            // 중복호출해 calcDiagByEpoch에 쌓던 것(철회마진계산 전용 자료)을
+            // 삭제함 - 중복계산이 없어져 약간의 성능개선도 겸함.
+            // [원상복구][2026-09-07][확인단계 완전제거 - 이중계산 성능
+            // 문제까지 제거] 감지 즉시 바로 담는다(원본과 동일).
+            if (sigs.length > 0) sigs.forEach(function (sg) { sg.barCountAtSignal = calc.barCount; signals.push(sg); });
+        }
+        // [신규][2026-09-26][흰다이아몬드] 워밍업 재생 루프도 실시간과 동일하게
+        // 별도 순회 없이 이 for문 안에서 이미 쌓인 pretty2Events를 그대로 꺼내 남긴다.
+        writePretty2Events(thisItemName, thisFileLabel, calc.drainPretty2Events());
+        // [2026-09-02][실시간판정 보완] 방금 재조회한 워밍업 이력(barsForCalc
+        // 기준 replay한 calc)을 그대로 실시간계산기로 이식 - 분봉본과 동일
+        // 패턴. barsForCalc는 이미 형성중인 마지막봉을 뺀 완결봉만 쓰므로
+        // liveBuilders가 다음 완결봉부터 이어붙이는 것과 정확히 맞아떨어진다.
+        liveCalcs[thisCycle] = calc;
+        liveBuilders[thisCycle] = new TickBarBuilder(thisCycle);
+        delete degradedPeriods[thisFileLabel]; // [2026-09-02][재시도보완] 실제 성공했으니 저품질 표시 해제
+        // [제거][사용자 요청][철회기능 전체 제거] findClosestCalcDiag/computeRetractionMargin/formatRetractionJudge 삭제됨(사용처 없어짐)
+
+        var newSignalLines = [];
+        for (var s = 0; s < signals.length; s++) {
+            try {
+                var timeStr = signals[s].stime;
+                var canonicalMatch = findPendingMatch(thisItemName, thisFileLabel, signals[s].kind, signals[s].sdate, timeStr, signals[s].price);
+                var writeSdate = canonicalMatch ? canonicalMatch.sdate : signals[s].sdate;
+                var writeStime = canonicalMatch ? canonicalMatch.stime : timeStr;
+                var ln = buildSignalLine(thisItemName, thisFileLabel, signals[s].kind, writeSdate, writeStime, signals[s].price, signals[s].leftFlatStar, null, ((signals[s].apexSdate || "") + " " + (signals[s].apexStime || "")).trim(), signals[s].apexHeight, signals[s].leftFlatRun, signals[s].apexSharp, signals[s].isPrettyTriangle);
+                if (ln) {
+                    var trialSig = buildNewSignalObject(thisItemName, thisFileLabel, signals[s].kind, writeSdate, writeStime, signals[s].price, thisCycle, signals[s].barCountAtSignal, 0, writeSdate + " " + writeStime, null, signals[s].leftFlatStar, signals[s].trueSdate, signals[s].trueStime);
+                    var trialResult = resolveHistorically(trialSig, barsForCalc);
+                    if (trialResult) {
+                        // [2026-08-18 신규][즉시판정 신호 로그 경량화] 감시목록에
+                        // 단 한 틱도 안 머물고 등록과 동시에 판정난 신호는, 예전처럼
+                        // 신호감지+STATUS_ACHIEVED/INVALID+REMOVAL_LOG 3줄을 남기지
+                        // 않는다 - 애초에 대시보드 감시목록에 표시된 적이 없는
+                        // 신호라 "제거 기록(REMOVAL_LOG)"도 의미가 없다. 대신
+                        // 통계 집계(bridge_signals.py compute_report) 전용으로
+                        // 압축된 한 줄(STATS_IMMEDIATE)만 남긴다.
+                        // 형식: item,tf,STATS_IMMEDIATE,sdate,stime,price,ACHIEVED|INVALID,소요분,kind
+                        if (trialResult.result === "ACHIEVED") achievedCount++; else invalidCount++;
+                        var durationMin = null;
+                        try { durationMin = (dateTimeToEpochApprox(String(trialResult.sdate), trialResult.stime) - trialSig.signalEpoch) / 60; } catch (eDur) { durationMin = null; }
+                        var statsLine = trialSig.itemName + "," + trialSig.tf + ",STATS_IMMEDIATE," + trialSig.sdate + "," + trialSig.stime + "," + trialSig.price.toFixed(2) + "," + trialResult.result + "," + (durationMin !== null ? durationMin.toFixed(2) : "") + "," + trialSig.kind;
+                        newSignalLines.push(statsLine);
+                        recordResolution(trialSig.tf, trialSig.kind, trialSig.sdate, trialSig.stime, trialSig.price, trialResult.result, trialResult.sdate + " " + trialResult.stime);
+                    } else {
+                        newSignalLines.push(ln);
+                        registerPendingSignal(thisItemName, thisFileLabel, signals[s].kind, writeSdate, writeStime, signals[s].price, thisCycle, signals[s].barCountAtSignal, trialSig.barsElapsedSinceRegistration, "WARM" + frameShiftNote, signals[s].leftFlatStar, signals[s].trueSdate, signals[s].trueStime, trialSig);
+                    }
+                }
+            } catch (e) {}
+        }
+        writeLinesToFile(newSignalLines);
+
+        // [제거][사용자 요청][철회기능 전체 제거] 여기 있던 철회판정 루프(마진기반 철회/요청봉수부족 감시목록제외 포함)를 통째로 삭제함 - pendingSignals는 이제 이 사이클에서 줄어들지 않음.
+
+        totalCyclesCompleted++;
+        if (barsForCalc.length > 0) {
+            var lastBar = barsForCalc[barsForCalc.length - 1];
+            logDiagnostic("[DIAG][CYCLE_DONE] label=" + thisFileLabel + " 마지막봉 high=" + lastBar.high + " low=" + lastBar.low, lastBar.sdate, lastBar.stime);
+            var newestEpochThisCycle = dateTimeToEpochApprox(String(lastBar.sdate), lastBar.stime);
+            var prevInfo = lastCycleBarInfo[thisFileLabel];
+            if (prevInfo && dateTimeToEpochApprox(String(bars[0].sdate), bars[0].stime) > prevInfo.newestEpoch) {
+                logDiagnostic("[DIAG][ADAPTIVE_GAP_DETECTED] label=" + thisFileLabel + " 이전마지막봉=" + prevInfo.newestEpoch + " 이번최초봉epoch=" + dateTimeToEpochApprox(String(bars[0].sdate), bars[0].stime) + " - 다음 요청이 이 공백만큼 자동으로 더 받아옵니다");
+            }
+            lastCycleBarInfo[thisFileLabel] = { newestEpoch: newestEpochThisCycle };
+        }
+
+        // [2026-08-13 안전성수정] 삭제타이머(5)는 이제 Main_OnTimer 안에서
+        // 스스로 고정주기로 재무장하므로 여기서 따로 SetTimer를 걸 필요가
+        // 없다(걸어도 무해하지만, 요청과 무관하게 독립적으로 도는 게
+        // 설계의도라 중복호출을 남기지 않는다).
+        pendingRemoveObjects.push(chartEx);
+        // [근본수정][2026-09-29][침묵 완료처리 사각지대] 예전엔 예외만 없으면
+        // 봉을 0개 받았어도 completedCycles=true로 찍어서 "완료"로 넘어갔다 -
+        // 재시도큐에도 안 들어가고 저품질(degraded)로도 안 넘어가는 사각지대라,
+        // [진행상황]/[순환완료] 로그의 분자 합이 총원과 안 맞는 걸로 실사례
+        // (분봉 M0001~M0007, 104/110)로 확인됨. 봉이 0개면 예외와 똑같이
+        // "실패"로 보고 재시도큐로 보낸다 - recordFailureForRetry가 기존
+        // 재시도횟수 카운팅을 그대로 하고, MAX_RETRY_ATTEMPTS를 다 채우면
+        // 그 함수 스스로 degradedPeriods+completedCycles를 true로 만든다
+        // (기존 저품질 전환 로직 재사용, 새 분기 없음).
+        if (bars.length > 0) {
+            completedCycles[thisCycle] = true;
+            filledCycles[thisCycle] = true; // [2026-09-25 신규] 예외 없이 여기까지 왔고 봉을 1개 이상 실제로 받았을 때만 true - thisCycle은 #주기 프레임재조준이 있었으면 이미 실제값으로 치환된 상태라 그대로 정확함
+        } else {
+            recordFailureForRetry({ code: MARKET_DATA_CODE, nameEn: thisItemName, cycle: thisCycle });
+        }
+
+    } catch (e) {
+        logMsg("  !! 처리오류: " + thisFileLabel + " - " + e.message);
+        recordFailureForRetry({ code: MARKET_DATA_CODE, nameEn: thisItemName, cycle: thisCycle });
+        pendingRemoveObjects.push(chartEx);
+    }
+
+    if (pendingStateDirty) { savePendingState(); pendingStateDirty = false; }
+    pacingOnCycleSuccess();
+    currentIndex++;
+    // [임시 진단][2026-09-05][하트비트 시작 전엔 화면이 조용해서 멈춘
+    // 것처럼 보이는 문제] 워밍업 1바퀴가 다 끝나야 하트비트가 시작되는데,
+    // 그 전까지는 개별 요청 로그가 전부 화면에 안 뜨는 조용한 태그라서,
+    // 실제로는 정상 진행 중이어도 화면만 보면 멈춘 것처럼 보일 수
+    // 있었다(실제 지적사항). 10개 완료마다 눈에 보이는 진행상황을
+    // 남겨서, 조용히 죽은 건지 정상 진행 중인지 바로 구분 가능하게 한다.
+    // [2026-09-25 수정][실제채움 기준으로 정정] completedCycles(성공+degraded
+    // 포기 합산)를 그대로 "실제 채워진 개수"라고 표시하던 게 거짓정보였음
+    // (검증 완료). filledCycles(진짜 데이터 받은 것만)를 분자로 쓰고,
+    // degraded 포기분은 별도로 명시한다.
+    if (currentIndex % 10 === 0 || currentIndex === targetList.length) {
+        var _degradedNowCount = Object.keys(degradedPeriods).length;
+        logMsg("[진행상황] " + Object.keys(filledCycles).length + "/" + baseTargetList.length + " 타임프레임 실제 데이터 수신 완료" +
+            (_degradedNowCount > 0 ? " (그 외 저품질(degraded)로 포기 " + _degradedNowCount + "개 - 완료 처리는 됐으나 실데이터 아님)" : ""));
+    }
+    Main.SetTimer(1, pacingMsCurrent);
+}
+
+function Main_OnRcvMarketData(MarketData) { marketDataObj = MarketData; }
+function Main_OnUpdateMarket(itemcode, updateID, exchangeKind) {
+    if (!marketDataObj || itemcode !== MARKET_DATA_CODE) return;
+    if (updateID !== 20001) return;
+    totalTicksReceived++;
+    var curPrice = Number(marketDataObj.current);
+    if (!isFinite(curPrice) || curPrice <= 0) return;
+    var sdate = parseDateField(marketDataObj.date), stime = parseTimeField(marketDataObj.time);
+    if (!sdate || !stime) return;
+    lastTickEpoch = dateTimeToEpochApprox(sdate, stime);
+    if (REALTIME_TRACK_ENABLED) {
+        Object.keys(liveBuilders).forEach(function (periodStr) {
+            try {
+                var period = Number(periodStr);
+                var bar = liveBuilders[period].onTick(curPrice, sdate, stime);
+                if (bar) processLiveBar(period, bar.high, bar.low, bar.sdate, bar.stime);
+            } catch (e) {}
+        });
+        Object.keys(realtimeOnlyBuilders).forEach(function (periodStr) {
+            try {
+                var period = Number(periodStr);
+                var bar = realtimeOnlyBuilders[period].onTick(curPrice, sdate, stime);
+                if (bar) processRealtimeOnlyBar(period, bar.high, bar.low, bar.sdate, bar.stime);
+            } catch (e) {}
+        });
+        try { updatePendingSignals(curPrice, sdate, stime); } catch (e) {}
+    }
+}
+
+function Main_OnTimer(nEventID) {
+    if (nEventID == 1) { Main.KillTimer(1); processNext(); }
+    else if (nEventID == 2) {
+        Main.KillTimer(2);
+        if (waitingForResponse) {
+            waitingForResponse = false;
+            var timedOutReq = null;
+            for (var qi2 = requestQueue.length - 1; qi2 >= 0; qi2--) if (requestQueue[qi2].seq === activeRequestSeq) { timedOutReq = requestQueue.splice(qi2, 1)[0]; break; }
+            // [근본수정][2026-09-30][타임아웃 요청 증발] 예전엔 타임아웃난 요청을 큐에서 지우기만 하고 재시도큐/저품질(degraded) 어디에도 안 넣어서,
+            // 그 타임프레임은 이번 순환에서 데이터도 못 받고 [순환완료]의 "실제수신+저품질" 합계에도 안 잡혔다(실사례: 162+7=169, 26개 증발).
+            // 이제 실패로 기록해 재시도큐로 보낸다(MAX_RETRY 소진 시 degraded 확정 - 기존 로직 그대로).
+            if (timedOutReq) {
+                logDiagnostic("[DIAG][REQUEST_TIMEOUT] label=" + timedOutReq.fileLabel + " cycle=" + timedOutReq.cycle + " - 재시도큐로 보냄");
+                recordFailureForRetry({ code: MARKET_DATA_CODE, nameEn: timedOutReq.itemName, cycle: timedOutReq.cycle });
+            }
+            timeoutTrackedLabels[currentFileLabel] = true; // [신규][2026-09-10] 이 라벨의 다음 정상매칭까지 추적
+            pacingOnCycleFailure();
+            currentIndex++;
+            Main.SetTimer(1, pacingMsCurrent + TIMEOUT_COOLDOWN_MS);
+        }
+    } else if (nEventID == 3) {
+        Main.KillTimer(3); quickSaveScheduled = false;
+        if (pendingStateDirty) { savePendingState(); pendingStateDirty = false; }
+    } else if (nEventID == 4) {
+        Main.KillTimer(4);
+        var elapsedMin = scriptStartTime ? Math.floor((Date.now() - scriptStartTime) / 60000) : -1;
+        logMsg("[하트비트] 경과:" + elapsedMin + "분 / 대기중:" + pendingSignals.length + " / 달성:" + achievedCount + " / 무효:" + invalidCount +
+            " / 수신틱:" + totalTicksReceived + " / 완료사이클:" + totalCyclesCompleted + " / 완료순환:" + totalPassesCompleted + "바퀴");
+        logDiagnostic("[DIAG][RESOURCE] pendingSignals=" + pendingSignals.length + " requestQueue=" + requestQueue.length +
+            " seenKeys=" + Object.keys(seenKeys).length + " seenKeysByPrice=" + Object.keys(seenKeysByPrice).length +
+            " recentResolutions=" + Object.keys(recentResolutions).length + " orphanedSignalDetails=" + Object.keys(orphanedSignalDetails).length +
+            " lastSeenRealTime=" + Object.keys(lastSeenRealTime).length);
+        pruneDedupStructures();
+        flushDiagnosticLog();
+        try {
+            var hbDate = parseDateField(marketDataObj ? marketDataObj.date : 0);
+            var hbTime = parseTimeField(marketDataObj ? marketDataObj.time : null) || "00:00:00";
+            timedPrintOnFile(OUTPUT_FILE, (currentItemName || INSTRUMENT_NAME) + ",HEARTBEAT_TICK,HEARTBEAT," + hbDate + "," + hbTime + ",0," + buildPendingKeysString() + "," + buildPendingDetailsString() + "\n");
+        } catch (e) {}
+        if (pendingStateDirty) { savePendingState(); pendingStateDirty = false; }
+        Main.SetTimer(4, HEARTBEAT_INTERVAL_MS);
+    } else if (nEventID == 5) {
+        // [2026-08-13 안전성수정] 기존엔 이 핸들러가 스스로를 재무장하지
+        // 않고, Main_OnRcvChartEx 성공/실패 분기마다 외부에서
+        // Main.SetTimer(5, REMOVE_OBJECT_DELAY_MS)를 걸어 재무장하는
+        // 구조였다. 1안은 targetList를 끝까지 돌면 처음부터 다시
+        // 순환하는 영구루프이고, pacingMsCurrent가 결국 0ms까지 떨어져
+        // 그대로 유지되므로(PACING_MS_MIN=0), 정상운영 상태에서는 다음
+        // 사이클이 300ms(REMOVE_OBJECT_DELAY_MS)보다 먼저 도착해 삭제
+        // 타이머가 발동 직전에 계속 리셋될 수 있었다(같은 타이머ID를
+        // 반복 호출하는 건 이 코드 전체에서 "재무장"으로 쓰이므로) -
+        // 이러면 Main.RemoveObject가 사실상 영원히 호출 안 되고
+        // pendingRemoveObjects가 무한정 쌓여 차트객체 누적으로 다운될
+        // 여지가 있었다. 이제는 이 핸들러가 매번 자기 자신을 다시
+        // 무장해서(요청 사이클과 무관하게) 고정주기로 독립적으로
+        // 발동하므로, 요청이 아무리 빨리 몰려도 삭제가 굶주리지 않는다.
+        if (pendingRemoveObjects.length > 0) {
+            var objectsToRemove = pendingRemoveObjects;
+            pendingRemoveObjects = [];
+            for (var ri5 = 0; ri5 < objectsToRemove.length; ri5++) {
+                try { Main.RemoveObject(objectsToRemove[ri5]); }
+                catch (e) { logDiagnostic("[DIAG][REMOVE_OBJECT_FAILED] " + e.message); }
+            }
+            lastRemoveObjectAt = Date.now();
+        }
+        Main.SetTimer(5, REMOVE_OBJECT_DELAY_MS);
+    } else if (nEventID == 7) {
+        // [신규][2026-09-09][삭제~다음요청 최소대기용 재시도 타이머]
+        Main.KillTimer(7);
+        processNext();
+    } else if (nEventID == 6) {
+        // [2026-09-02][degraded복구 보완] 분봉본과 동일 패턴
+        if (!waitingForResponse) {
+            var degradedList6 = Object.keys(degradedPeriods);
+            for (var dgi = 0; dgi < degradedList6.length; dgi++) {
+                var dLabel = degradedList6[dgi];
+                if (degradedRecoveryPending[dLabel]) continue;
+                var dCycle = parseInt(dLabel.slice(1), 10);
+                degradedRecoveryPending[dLabel] = true;
+                var insertAt = Math.min(currentIndex, targetList.length);
+                targetList.splice(insertAt, 0, { code: MARKET_DATA_CODE, nameEn: INSTRUMENT_NAME, cycle: dCycle });
+                delete completedCycles[dCycle]; // [신규][사용자 지적으로 발견한 충돌 수정] 포기시 completedCycles에 "임시완료"로 표시해뒀던 걸 진짜 재시도 직전에 해제 - 안 그러면 스킵로직이 이 재삽입을 건너뜀
+                logMsg("  ? [degraded복구] " + dLabel + " 본 순환에 재삽입(1분 주기)");
+                break;
+            }
+        }
+        Main.SetTimer(6, DEGRADED_RECOVERY_INTERVAL_MS);
+    }
+}
