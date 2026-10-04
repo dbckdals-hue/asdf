@@ -1,0 +1,781 @@
+<!DOCTYPE html>
+<!--
+================================================================================
+[이 파일: 월물(계약월) 관리 페이지]
+
+역할: contracts.json을 눈으로 보면서 편집하고, 저장하면 곧바로
+generate_signal_files.py를 실행해 signal_*.js 파일들을 재생성합니다.
+
+이 페이지는 반드시 contract_manager_server.py가 켜져 있는 상태에서만
+정상 동작합니다(정적 파일이 아니라 로컬 API 서버와 통신합니다).
+
+페이지를 닫으면(탭 닫기/새로고침 포함) contract_manager_server.py도
+자동으로 함께 종료됩니다(beforeunload에서 sendBeacon으로 종료 신호를
+보냄) - "창닫기" 버튼을 누르면 확인창을 거쳐 서버 종료 신호를 보내고
+곧바로 탭도 자동으로 닫으려 시도합니다(브라우저 정책상 자동닫기가
+막히는 경우가 있어, 그럴 땐 화면에 남는 안내를 보고 직접 닫으면 됩니다
+- 그 시점에 서버는 이미 종료된 상태입니다).
+================================================================================
+[버전] 2026-10-04 v1.10
+[버전관리 규칙] 이 파일을 수정할 때마다(사소한 수정 포함) 반드시 위 [버전]
+  값을 소수점 둘째자리 기준으로 올리고(v1.00->v1.01->v1.02...) 아래
+  [변경이력]에 한 줄 추가할 것.
+[변경이력]
+  v1.10 (2026-10-04): [크루드오일 추가] 월물 순환(CRUDE_CYCLE, 매월)과 마지막 거래일 대략추정(CL 규칙) 추가. 다른 종목 동작은 그대로.
+  v1.00 (~2026-08-10까지): 최초 버전(활성/다음월물 둘 다 텍스트 입력)
+  v1.01 (2026-08-30): [UI 개편] 좌측(활성월물)은 읽기전용 확인+삭제 전용으로,
+    우측(다음월물)은 다음월물/다다음월물 콤보박스 선택시 코드/라벨/월물설명
+    자동채움으로 변경. "이 종목만 생성" 버튼은 다음월물 파일만 생성하도록
+    서버(v1.01)와 함께 수정, 버튼 문구도 "다음월물 파일 생성"으로 변경.
+  v1.02 (2026-08-30): [디자인 일관성 정리] v1.01에서 새로 추가했던 별도
+    콤보박스/전체너비 버튼이 기존 틀과 안 어울린다는 지적에 따라 재작업 -
+    종목코드 입력칸 자체를 콤보(datalist)로 교체(별도 박스 제거), 생성버튼은
+    원래처럼 제목 옆 작은 버튼으로 복귀, 삭제버튼도 새 스타일 없이 기존
+    .danger 클래스 재사용해 제목줄 안에 작게 배치.
+  v1.03 (2026-08-30): [버튼 위치 원복 + 콤보박스 방식 재변경] 삭제/생성
+    버튼을 다시 박스 하단(전체너비)으로 이동, 종목코드 입력칸 콤보(datalist)
+    방식을 버리고 다음월물/다다음월물 select 콤보박스를 별도로 두는 v1.01
+    방식으로 되돌림(단, 스타일은 정리된 상태 유지).
+  v1.04 (2026-08-30): [의도 재확인 - 종목코드 칸 자체를 콤보박스로] v1.03의
+    "별도 select 박스" 방향이 잘못 이해한 것이었음 - "종목코드" 필드 자체를
+    select(다음월물/다다음월물 코드 표시)로 교체, 별도 박스는 다시 제거.
+    collectForm()이 select 값도 읽도록 셀렉터에 "select[data-field]" 추가.
+  v1.05 (2026-08-30): [삭제 -> 다음월물 롤오버로 변경] 활성월물을 지우면
+    공란이 되던 것을, 지금의 next를 그대로 새 active로 승격시키고 새
+    next는 그 기준으로 코드/라벨/월물설명을 자동계산(만기일만 직접 입력)
+    하도록 변경 - 버튼명도 "다음월물로 롤오버(활성 교체)"로 변경. 종목코드
+    select를 텍스트박스와 동일한 스타일로 통일(테두리/배경/폰트 일치,
+    브라우저 기본 select 외형 제거).
+  v1.06 (2026-08-30): [만기일도 대략 추정해서 채움] 처음 페이지 로딩값도
+    "검색으로 확인한 추정치"였던 것과 같은 수준으로, 콤보박스 선택/롤오버
+    시에도 만기일을 자동 추정해서 채우도록 변경 - 지수선물(나스닥/SP500)은
+    해당월 셋째 금요일, 금선물은 월말 기준 3번째 영업일 전으로 계산
+    (나스닥 12월물 계산값이 기존 저장값과 정확히 일치함을 확인). 계속
+    직접 수정 가능하며 확정치 아님.
+  v1.07 (2026-08-30): [생성버튼에도 확인창 추가] "다음월물 파일 생성"
+    버튼도 저장(전체 저장)/롤오버(active-del-btn)와 똑같이 contracts.json을
+    덮어쓰는 조작인데 확인창이 빠져있었음 - 통일성 있게 추가.
+  v1.08 (2026-08-30): [전체 저장 버튼 제거] 종목마다 이미 개별 생성
+    버튼이 있어서 중복이라는 지적에 따라 "저장하고 파일 생성"(btnSave,
+    전체 종목 대상) 버튼과 그 핸들러를 완전히 제거.
+  v1.09 (2026-08-30): [교체/복원 버튼 분리] "다음월물로 롤오버" 버튼
+    하나였던 걸 "다음월물 교체"와 "이전월물 복원" 2개로 분리 - 교체할
+    때 직전 active/next를 previousActive/previousNext에 1단계만 보관해서
+    실수했을 때 복원 버튼으로 되돌릴 수 있게 함(복원 후엔 기록이 비워져
+    다시 교체해야 새 복원 기록이 생김). 서버 검증 로직은 이 추가 필드를
+    막지 않음을 확인(그대로 통과).
+================================================================================
+-->
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>월물 관리 - 신호검색 자동생성</title>
+<style>
+  :root{
+    --bg:#0a0e10; --panel:#11171a; --line:#232b2f; --text:#c9d6d3; --muted:#5f7370;
+    --cyan:#35c9c9; --amber:#f2a93b; --blue:#5b8cff; --red:#e5534b; --green:#3ecf8e;
+    --mono: ui-monospace, "SFMono-Regular", "JetBrains Mono", Consolas, monospace;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0; background:var(--bg); color:var(--text); font-family:var(--mono); font-size:13px; padding:20px;}
+  h1{font-size:16px; font-weight:600; margin:0 0 4px; color:#e8f2ef;}
+  .sub{color:var(--muted); font-size:11.5px; margin-bottom:18px;}
+  .toolbar{display:flex; gap:10px; align-items:center; margin-bottom:18px; flex-wrap:wrap;}
+  button{
+    background:#1a2226; border:1px solid var(--line); color:var(--text);
+    padding:7px 14px; border-radius:4px; font-family:var(--mono); font-size:12.5px; cursor:pointer;
+  }
+  button:hover{border-color:var(--cyan); color:#fff;}
+  button.primary{border-color:var(--cyan); color:#0a0e10; background:var(--cyan); font-weight:700;}
+  button.primary:hover{background:#4de0e0;}
+  button.danger{border-color:var(--red); color:var(--red);}
+  button.danger:hover{background:var(--red); color:#fff;}
+  button:disabled{opacity:0.4; cursor:not-allowed;}
+
+  .pill{padding:4px 10px; border-radius:10px; border:1px solid var(--line); font-size:11px; color:var(--muted);}
+  .pill.ok{border-color:var(--green); color:var(--green);}
+  .pill.err{border-color:var(--red); color:var(--red);}
+
+  .instrument{background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:16px 18px; margin-bottom:16px;}
+  .instrument h2{font-size:14px; margin:0 0 12px; color:#e8f2ef; display:flex; align-items:center; gap:10px;}
+  .instrument h2 .code{color:var(--cyan); font-weight:400; font-size:12px;}
+
+  /* [2026-08-30 신규] 활성월물 칸의 "이전월물 복원" / "다음월물 교체"
+     버튼 2개를 나란히 배치. 다음월물 칸의 생성버튼(전체너비, 위쪽 margin)
+     과 시각적 높이가 맞도록 margin-top을 동일하게 맞춘다. */
+  .active-btn-row{display:flex; gap:8px; margin-top:10px;}
+  .active-btn-row button{flex:1; width:auto;}
+
+  .contracts-row{display:flex; gap:20px; flex-wrap:wrap;}
+  .contract-col{flex:1; min-width:260px; border:1px solid var(--line); border-radius:6px; padding:12px 14px; background:#0d1315;}
+  .contract-col.active-col{border-color:var(--green);}
+  .contract-col.next-col{border-color:var(--amber);}
+  .contract-col .col-title{font-size:12px; font-weight:700; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center;}
+  .active-col .col-title{color:var(--green);}
+  .next-col .col-title{color:var(--amber);}
+  .dday{font-size:10.5px; color:var(--muted); font-weight:400;}
+
+  label{display:block; font-size:10.5px; color:var(--muted); margin:8px 0 3px;}
+  input[type=text]{
+    width:100%; background:#0a0e10; border:1px solid var(--line); color:var(--text);
+    padding:6px 8px; border-radius:4px; font-family:var(--mono); font-size:12.5px;
+  }
+  input[type=text]:focus{outline:none; border-color:var(--cyan);}
+  input[readonly]{color:var(--muted); background:#080c0d;}
+  .cc-empty-note{color:var(--muted); font-size:11.5px; padding:8px 0;}
+
+  /* [2026-08-30 신규] 종목코드 select(콤보박스)가 텍스트박스와 똑같아
+     보이도록 브라우저 기본 select 테두리/배경을 지우고 위 input[type=text]과
+     동일한 값으로 맞춘다. 화살표만 오른쪽에 살짝 남겨서 콤보박스라는
+     티는 나게 하되, 나머지는 완전히 통일. */
+  .instrument select{
+    width:100%; background:#0a0e10; border:1px solid var(--line); color:var(--text);
+    padding:6px 26px 6px 8px; border-radius:4px; font-family:var(--mono); font-size:12.5px;
+    appearance:none; -webkit-appearance:none; -moz-appearance:none;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M0 0L5 6L10 0Z' fill='%237a8f8a'/></svg>");
+    background-repeat:no-repeat; background-position:right 8px center;
+  }
+  .instrument select:focus{outline:none; border-color:var(--cyan);}
+  .instrument select option{background:#0a0e10; color:var(--text);}
+
+  .basic-fields{display:flex; gap:14px; margin-bottom:10px;}
+  .basic-fields > div{flex:1;}
+  .basic-fields label{margin-top:0;}
+
+  #log{
+    white-space:pre-wrap; background:#0d1315; border:1px solid var(--line); border-radius:6px;
+    padding:12px; font-size:11.5px; max-height:320px; overflow-y:auto; margin-top:14px; color:var(--muted);
+  }
+  #log .ok-line{color:var(--green);}
+  #log .err-line{color:var(--red);}
+  #fileList{margin-top:10px; font-size:11.5px; color:var(--muted);}
+  #fileList .f{display:inline-block; background:#0d1315; border:1px solid var(--line); border-radius:4px; padding:3px 8px; margin:2px; color:var(--text);}
+</style>
+</head>
+<body>
+
+<h1>월물(계약월) 관리</h1>
+<div class="sub">여기서 값을 입력/저장하면 곧바로 signal_*.js 파일들이 자동으로 재생성됩니다. (서버: contract_manager_server.py 가 켜져 있어야 동작합니다)</div>
+
+<div class="toolbar">
+  <span class="pill" id="connStatus">연결 확인중...</span>
+  <button id="btnReload">새로고침(서버 값 다시 불러오기)</button>
+  <button id="btnShutdown" class="danger">창닫기</button>
+</div>
+
+<div id="instruments"></div>
+
+<div id="log" style="display:none;"></div>
+<div id="fileList"></div>
+
+<script>
+(function(){
+
+var API = {
+  config: '/api/config',
+  generate: '/api/generate',
+  shutdown: '/api/shutdown',
+  files: '/api/files',
+};
+
+var currentConfig = null;
+
+function el(tag, attrs, children){
+  var e = document.createElement(tag);
+  if (attrs) Object.keys(attrs).forEach(function(k){
+    if (k === 'text') e.textContent = attrs[k];
+    else e.setAttribute(k, attrs[k]);
+  });
+  (children||[]).forEach(function(c){ e.appendChild(c); });
+  return e;
+}
+
+function daysUntil(dateStr){
+  if (!dateStr) return null;
+  var target = new Date(dateStr + 'T00:00:00');
+  if (isNaN(target.getTime())) return null;
+  var now = new Date();
+  var diffMs = target.setHours(0,0,0,0) - now.setHours(0,0,0,0);
+  return Math.round(diffMs / 86400000);
+}
+
+// [2026-08-30 신규][월물코드 자동 롤오버] 종목군별 표준 거래월 순서.
+// 지수선물(나스닥/SP500 등 CME 분기물)은 3/6/9/12월(H/M/U/Z)만 거래되고,
+// 금선물은 짝수월(G/J/M/Q/V/Z) 전부 거래된다. slug가 늘어나도 새 종목이
+// 지수 계열이면 별도 등록 없이 기본값(분기물)을 쓰면 되고, 금처럼
+// 다른 주기가 필요하면 SPECIAL_CYCLES에 slug만 추가하면 된다.
+var QUARTERLY_CYCLE = ['H','M','U','Z'];
+var GOLD_CYCLE = ['G','J','M','Q','V','Z'];
+// [2026-10-04 신규] 크루드오일(CL)은 매월 월물이 있어 12개월 전부를 순서대로 돈다.
+var CRUDE_CYCLE = ['F','G','H','J','K','M','N','Q','U','V','X','Z'];
+var SPECIAL_CYCLES = { gold: GOLD_CYCLE, crudeoil: CRUDE_CYCLE };
+var MONTH_NUM_BY_LETTER = {F:1,G:2,H:3,J:4,K:5,M:6,N:7,Q:8,U:9,V:10,X:11,Z:12};
+
+function cycleForSlug(slug){ return SPECIAL_CYCLES[slug] || QUARTERLY_CYCLE; }
+
+function parseLabel(label){
+  var m = /^([A-Za-z])(\d{2})$/.exec(label || '');
+  if (!m) return null;
+  return { letter: m[1].toUpperCase(), year: parseInt(m[2], 10) };
+}
+
+// 주어진 라벨(예: "Z26") 기준으로 그 종목군의 다음 거래월 라벨을 계산.
+// 형식을 못 알아보면(비표준 라벨 등) null을 돌려주고, 그 경우 호출부는
+// 자동채움을 포기하고 사용자가 직접 입력하게 둔다(잘못된 값을 억지로
+// 채워넣지 않음).
+function nextLabelInCycle(slug, label){
+  var info = parseLabel(label);
+  if (!info) return null;
+  var cycle = cycleForSlug(slug);
+  var idx = cycle.indexOf(info.letter);
+  if (idx === -1) return null;
+  var nextIdx = (idx + 1) % cycle.length;
+  var yearAdd = (idx + 1 >= cycle.length) ? 1 : 0;
+  return cycle[nextIdx] + String(info.year + yearAdd).padStart(2, '0');
+}
+
+function monthLabelForLetter(letter){
+  var n = MONTH_NUM_BY_LETTER[(letter || '').toUpperCase()];
+  return n ? (n + '월물') : '';
+}
+
+// 기존 코드(예: "NQZ26")에서 라벨 부분("Z26")을 떼어내고 새 라벨로
+// 갈아끼운 코드를 만든다. 접두어(NQ/ES/GC 등)가 라벨 앞에 그대로 붙는
+// 표준 표기라는 전제 - 이 전제가 실제와 다르면(형식이 특이하면) 그냥
+// 빈 문자열을 돌려줘서 사용자가 직접 채우게 한다.
+function codeWithNewLabel(existingCode, oldLabel, newLabel){
+  if (!existingCode || !oldLabel) return '';
+  if (existingCode.slice(-oldLabel.length) !== oldLabel) return '';
+  return existingCode.slice(0, existingCode.length - oldLabel.length) + newLabel;
+}
+
+// [2026-08-30 신규][마지막 거래일 대략 추정] 처음 페이지를 열 때 뜨는
+// 값도 정확한 거래소 확정치가 아니라 "검색으로 확인한 추정치"였다
+// (contracts.json 자체 설명 문구) - 그러니 콤보박스로 다른 월물을
+// 고를 때도 같은 수준의 대략적인 추정값 정도는 채워주는 게 자연스럽다.
+// 정확한 값이 아니므로 이후에도 계속 "직접 확인" 문구/필드는 그대로
+// 편집 가능하게 남겨둔다.
+function nthLastBusinessDay(year, month, n){
+  // month: 1~12. 그 달의 "끝에서 n번째 영업일(주말 제외)"의 Date를 반환.
+  var d = new Date(year, month, 0); // month의 마지막 날
+  var count = 0;
+  while (true) {
+    var dow = d.getDay();
+    if (dow !== 0 && dow !== 6) {
+      count++;
+      if (count === n) return new Date(d);
+    }
+    d.setDate(d.getDate() - 1);
+  }
+}
+function thirdFriday(year, month){
+  var d = new Date(year, month - 1, 1);
+  var firstFriday = 1 + ((5 - d.getDay() + 7) % 7);
+  return new Date(year, month - 1, firstFriday + 14);
+}
+function toDateStr(d){
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+// [2026-10-04 신규][크루드오일 마지막 거래일 대략 추정] CME WTI(CL): 인도월 직전월 25일이
+// 영업일이면 그 25일 3영업일 전, 25일이 휴일/주말이면 그 직전 영업일의 3영업일 전.
+// 공휴일 캘린더는 반영하지 않은 대략치(크리스마스/신정 등이 끼면 하루 어긋날 수 있음).
+function minusBusinessDays(d, n){
+  var x = new Date(d);
+  while (n > 0) {
+    x.setDate(x.getDate() - 1);
+    var w = x.getDay();
+    if (w !== 0 && w !== 6) n--;
+  }
+  return x;
+}
+function crudeLastTradingDay(year, month){
+  var d25 = new Date(year, month - 2, 25); // 인도월 직전월의 25일(1월물이면 전년 12월)
+  var w = d25.getDay();
+  if (w === 0 || w === 6) { var p = minusBusinessDays(d25, 1); return minusBusinessDays(p, 3); }
+  return minusBusinessDays(d25, 3);
+}
+function estimateLastTradingDay(slug, label){
+  var info = parseLabel(label);
+  if (!info) return '';
+  var year = 2000 + info.year;
+  var month = MONTH_NUM_BY_LETTER[info.letter];
+  if (!month) return '';
+  if (slug === 'crudeoil') return toDateStr(crudeLastTradingDay(year, month));
+  if (SPECIAL_CYCLES[slug]) {
+    // 금 등 실물선물 관행: 끝에서 3번째 영업일 근처(대략치)
+    return toDateStr(nthLastBusinessDay(year, month, 3));
+  }
+  // 지수선물(CME 분기물) 관행: 그 달 셋째 금요일 근처(대략치)
+  return toDateStr(thirdFriday(year, month));
+}
+
+function ddayLabel(dateStr){
+  var d = daysUntil(dateStr);
+  if (d === null) return '';
+  if (d < 0) return '(이미 지남, ' + Math.abs(d) + '일 전)';
+  if (d === 0) return '(오늘 만기)';
+  return '(D-' + d + ')';
+}
+
+function setStatus(ok, msg){
+  var s = document.getElementById('connStatus');
+  s.textContent = msg;
+  s.className = 'pill ' + (ok ? 'ok' : 'err');
+}
+
+function loadConfig(){
+  fetch(API.config).then(function(r){
+    if (!r.ok) throw new Error('서버 응답 오류(' + r.status + ')');
+    return r.json();
+  }).then(function(data){
+    currentConfig = data;
+    renderForm(data);
+    setStatus(true, '연결됨');
+  }).catch(function(e){
+    setStatus(false, '연결 실패: ' + e.message);
+  });
+}
+
+function renderForm(config){
+  var root = document.getElementById('instruments');
+  root.innerHTML = '';
+  Object.keys(config.instruments).forEach(function(slug){
+    var inst = config.instruments[slug];
+    root.appendChild(renderInstrument(slug, inst));
+  });
+}
+
+function renderInstrument(slug, inst){
+  var box = el('div', { class: 'instrument', 'data-slug': slug });
+  var h2 = el('h2', {}, [
+    document.createTextNode(inst.nameKr + ' '),
+    el('span', { class: 'code', text: '(' + inst.nameEnDefault + ' / ' + slug + ')' }),
+  ]);
+  box.appendChild(h2);
+
+  var basicRow = el('div', { class: 'basic-fields' });
+  basicRow.appendChild(fieldBlock(slug, null, 'nameKr', '종목 한글명', inst.nameKr));
+  basicRow.appendChild(fieldBlock(slug, null, 'nameEnDefault', '종목 영문명(대시보드 표시용)', inst.nameEnDefault));
+  box.appendChild(basicRow);
+
+  var row = el('div', { class: 'contracts-row' });
+  row.appendChild(activeCol(slug, inst));
+  row.appendChild(nextCol(slug, inst));
+  box.appendChild(row);
+
+  var slugLog = el('div', { class: 'slug-log', 'data-slug-log': slug });
+  slugLog.style.display = 'none';
+  slugLog.style.whiteSpace = 'pre-wrap';
+  slugLog.style.background = '#0d1315';
+  slugLog.style.border = '1px solid var(--line)';
+  slugLog.style.borderRadius = '6px';
+  slugLog.style.padding = '10px';
+  slugLog.style.fontSize = '11px';
+  slugLog.style.marginTop = '10px';
+  slugLog.style.color = 'var(--muted)';
+  box.appendChild(slugLog);
+
+  return box;
+}
+
+// [2026-08-30 재작성][좌: 확인+삭제 전용] 활성 월물은 이미 실시간으로
+// 운영 중인 파일의 값이라 여기서 값을 고쳐서 재생성할 이유가 없다는
+// 지적에 따라, 이 칸은 이제 "지금 뭐가 활성인지 확인"과 "다 쓴 뒤
+// 대시보드 월물정보에서 지우기" 용도로만 쓴다(입력 불가, 조회+삭제만).
+// 삭제 버튼은 박스 맨 아래(예전 위치)로 배치.
+// [2026-08-30 재작성][좌: 이전월물 복원 + 다음월물 교체, 버튼 2개로 분리]
+// 활성 월물은 이미 실시간으로 운영 중인 파일의 값이라 여기서 값을
+// 고쳐서 재생성할 이유가 없다는 지적에 따라, 이 칸은 조회 전용(입력
+// 불가)이고 두 가지 조작만 가능하다:
+//  - "다음월물 교체": 지금의 next를 새 active로 승격(교체 직전 값은
+//    previousActive/previousNext에 1단계만 보관 - 실수했을 때 되돌릴
+//    용도).
+//  - "이전월물 복원": 방금 교체하기 직전 값(previousActive/previousNext)
+//    이 있을 때만 눌러서 원상복구. 그 기록이 없으면(교체한 적이 없거나
+//    이미 한 번 복원해서 소진됐으면) 비활성화.
+function activeCol(slug, inst){
+  var col = el('div', { class: 'contract-col active-col' });
+  var titleRow = el('div', { class: 'col-title' });
+  titleRow.appendChild(document.createTextNode('활성 월물 (지금 실시간 운영중)'));
+
+  var active = inst.active;
+  if (active) {
+    titleRow.appendChild(el('span', { class: 'dday', text: ddayLabel(active.lastTradingDay) }));
+  }
+  col.appendChild(titleRow);
+
+  if (!active) {
+    col.appendChild(el('div', { class: 'cc-empty-note', text: '설정된 활성 월물이 없습니다.' }));
+  } else {
+    ['code', 'label', 'monthLabel', 'lastTradingDay'].forEach(function(field){
+      var labelMap = { code: '종목코드', label: '월물 라벨', monthLabel: '월물 설명', lastTradingDay: '마지막 거래일' };
+      var wrap = el('div');
+      wrap.appendChild(el('label', { text: labelMap[field] }));
+      wrap.appendChild(el('input', { type: 'text', value: active[field] || '', readonly: 'readonly' }));
+      col.appendChild(wrap);
+    });
+  }
+
+  var btnRow = el('div', { class: 'active-btn-row' });
+
+  var hasPrevious = !!(inst.previousActive || inst.previousNext);
+  var restoreBtn = el('button', { class: 'active-restore-btn', 'data-slug': slug, text: '이전월물 복원' });
+  if (!hasPrevious) {
+    restoreBtn.disabled = true;
+    restoreBtn.title = '되돌릴 교체 기록이 없습니다(교체한 적이 없거나 이미 복원해서 소진됨)';
+  } else {
+    restoreBtn.title = '교체 직전 값(' + (inst.previousActive ? inst.previousActive.label + ' ' + inst.previousActive.monthLabel : '없음') + ')으로 되돌립니다';
+  }
+  btnRow.appendChild(restoreBtn);
+
+  var delBtn = el('button', { class: 'danger active-del-btn', 'data-slug': slug, text: '다음월물 교체' });
+  if (!inst.next || !inst.next.code) delBtn.disabled = true;
+  btnRow.appendChild(delBtn);
+
+  col.appendChild(btnRow);
+
+  return col;
+}
+
+// [2026-08-30 재작성][우: 월물정보 콤보박스] 다음월물/다다음월물 두 개를
+// 보여주는 콤보박스에서 고르면 코드/라벨/월물설명이 자동으로 아래
+// 필드에 채워진다(만기일은 거래소 캘린더 확인이 필요해 자동채움 대상에서
+// 일부러 제외 - 직접 입력/확인해야 함). 생성 버튼은 박스 맨 아래(예전 위치).
+function nextCol(slug, inst){
+  var col = el('div', { class: 'contract-col next-col' });
+  var titleRow = el('div', { class: 'col-title' });
+  titleRow.appendChild(document.createTextNode('다음 월물 (사전 준비용)'));
+  var next = inst.next;
+  var ddayEl = el('span', { class: 'dday', 'data-dday-for': slug + '.next', text: ddayLabel(next.lastTradingDay) });
+  titleRow.appendChild(ddayEl);
+  col.appendChild(titleRow);
+
+  var baseLabel = (inst.active && inst.active.label) || next.label;
+  var opt1Label = nextLabelInCycle(slug, baseLabel);
+  var opt2Label = opt1Label ? nextLabelInCycle(slug, opt1Label) : null;
+  var opt1Code = opt1Label ? codeWithNewLabel(next.code, next.label, opt1Label) : '';
+  var opt2Code = opt2Label ? codeWithNewLabel(next.code, next.label, opt2Label) : '';
+  var codeToLabel = {};
+  if (opt1Code) codeToLabel[opt1Code] = opt1Label;
+  if (opt2Code) codeToLabel[opt2Code] = opt2Label;
+
+  // [2026-08-30 재작성] "종목코드" 칸 자체를 콤보박스(select)로 바꾼다 -
+  // 별도 선택 상자를 위에 더 만들지 않는다. 기존 텍스트 입력값(next.code)이
+  // 두 후보(다음월물/다다음월물) 중 하나와 정확히 같으면 그 옵션이 이미
+  // 선택된 상태로 보이고, 다르면(직접 입력했던 값이면) "직접 입력값 유지"
+  // 옵션으로 보존한다 - 기존 값을 잃어버리지 않는다.
+  var codeWrap = el('div');
+  codeWrap.appendChild(el('label', { text: '종목코드 (예: NQZ26) - 고르면 라벨/월물설명 자동입력' }));
+  var codeSelect = el('select', { 'data-slug': slug, 'data-key': 'next', 'data-field': 'code' });
+  var currentIsCandidate = codeToLabel.hasOwnProperty(next.code || '');
+  if (!currentIsCandidate && next.code) {
+    codeSelect.appendChild(el('option', { value: next.code, text: next.code + ' (현재 값 유지)' }));
+  }
+  if (opt1Code) codeSelect.appendChild(el('option', { value: opt1Code, text: opt1Code + ' - 다음월물 (' + opt1Label + ' ' + monthLabelForLetter(opt1Label[0]) + ')' }));
+  if (opt2Code) codeSelect.appendChild(el('option', { value: opt2Code, text: opt2Code + ' - 다다음월물 (' + opt2Label + ' ' + monthLabelForLetter(opt2Label[0]) + ')' }));
+  if (!opt1Code) {
+    codeSelect.appendChild(el('option', { value: next.code || '', text: '(현재 라벨 형식을 못 알아봐 자동계산 불가)', disabled: 'disabled' }));
+  }
+  codeSelect.value = next.code || '';
+  codeWrap.appendChild(codeSelect);
+  col.appendChild(codeWrap);
+
+  col.appendChild(fieldBlock(slug, 'next', 'label', '월물 라벨 (예: Z26) - 파일명에 그대로 쓰임', next.label));
+  col.appendChild(fieldBlock(slug, 'next', 'monthLabel', '월물 설명 (예: 12월물)', next.monthLabel));
+  var lastTradingInput = fieldBlock(slug, 'next', 'lastTradingDay', '마지막 거래일 (YYYY-MM-DD) - 반드시 직접 확인', next.lastTradingDay);
+  lastTradingInput.querySelector('input').addEventListener('input', function(){
+    ddayEl.textContent = ddayLabel(this.value);
+  });
+  col.appendChild(lastTradingInput);
+
+  codeSelect.addEventListener('change', function(){
+    var matchedLabel = codeToLabel[this.value];
+    if (!matchedLabel) return; // "현재 값 유지" 선택시 아무것도 안 건드림
+    var labelInput = col.querySelector('input[data-field=label]');
+    var monthInput = col.querySelector('input[data-field=monthLabel]');
+    var ltdInput = col.querySelector('input[data-field=lastTradingDay]');
+    labelInput.value = matchedLabel;
+    monthInput.value = monthLabelForLetter(matchedLabel[0]);
+    // [2026-08-30 수정] 처음 페이지 로딩값도 어차피 "검색으로 확인한
+    // 추정치"였으므로, 콤보박스로 고를 때도 같은 수준의 대략적인
+    // 추정값을 채워준다(정확한 확정치 아님 - 계속 직접 수정 가능).
+    ltdInput.value = estimateLastTradingDay(slug, matchedLabel);
+    ddayEl.textContent = ddayLabel(ltdInput.value);
+  });
+
+  var genBtn = el('button', { class: 'slug-gen-btn primary', 'data-slug': slug, text: '다음월물 파일 생성' });
+  genBtn.style.marginTop = '10px';
+  genBtn.style.width = '100%';
+  col.appendChild(genBtn);
+
+  return col;
+}
+
+function fieldBlock(slug, key, field, labelText, value){
+  var wrap = el('div');
+  wrap.appendChild(el('label', { text: labelText }));
+  var inputId = 'f_' + slug + '_' + (key || 'base') + '_' + field;
+  var input = el('input', { type: 'text', id: inputId, value: value || '',
+    'data-slug': slug, 'data-key': key || '', 'data-field': field });
+  wrap.appendChild(input);
+  return wrap;
+}
+
+function collectForm(){
+  if (!currentConfig) return null;
+  var config = JSON.parse(JSON.stringify(currentConfig)); // 깊은 복사 후 입력값으로 갱신
+  // [2026-08-30 수정][읽기전용 필드 오염 방지 + select 지원] 활성월물 칸은
+  // data-slug/data-key/data-field가 없는 순수 표시용(readonly) input이라
+  // - 옛날처럼 "[type=text]"만으로 걸면 그 input들까지 걸려서
+  // inst[undefined] = value 같은 오염이 생긴다. data-field가 실제로
+  // 있는 입력만 정확히 골라서 반영한다. 종목코드 칸이 select로 바뀌면서
+  // "input[type=text]"뿐 아니라 "select"도 같이 걸어야 함(둘 다
+  // data-field가 있는 것만).
+  document.querySelectorAll('#instruments input[type=text][data-field], #instruments select[data-field]').forEach(function(input){
+    var slug = input.getAttribute('data-slug');
+    var key = input.getAttribute('data-key');
+    var field = input.getAttribute('data-field');
+    var inst = config.instruments[slug];
+    if (!key) {
+      inst[field] = input.value;
+    } else {
+      inst[key][field] = input.value;
+    }
+  });
+  // nameEn(종목_월물라벨)은 사람이 직접 안 건드려도 되게 자동으로 채움.
+  // [2026-08-30 수정] active가 삭제(null)됐을 수 있으므로 존재할 때만 채움.
+  Object.keys(config.instruments).forEach(function(slug){
+    var inst = config.instruments[slug];
+    if (inst.active) inst.active.nameEn = inst.nameEnDefault + '_' + inst.active.label;
+    if (inst.next) inst.next.nameEn = inst.nameEnDefault + '_' + inst.next.label;
+  });
+  return config;
+}
+
+function appendLog(text, cls){
+  var log = document.getElementById('log');
+  log.style.display = 'block';
+  var line = document.createElement('div');
+  if (cls) line.className = cls;
+  line.textContent = text;
+  log.appendChild(line);
+  log.scrollTop = log.scrollHeight;
+}
+
+function clearLog(){
+  var log = document.getElementById('log');
+  log.innerHTML = '';
+  log.style.display = 'none';
+}
+
+// [2026-08-10 추가][종목별 개별생성] 카드마다 동적으로 생기는 버튼이라
+// 이벤트 위임으로 처리합니다. contracts.json은 종목이 하나로 합쳐진
+// 파일이라 저장은 항상 전체를 저장하지만(다른 종목 폼의 값도 함께
+// 반영해야 하므로), 파일 "생성"은 이 종목만으로 범위를 좁혀 요청합니다
+// - 그래야 방금 만들어둔 다른 종목의 최신 파일이 실수로 지워지지 않음.
+document.getElementById('instruments').addEventListener('click', function(ev){
+  var btn = ev.target.closest('.slug-gen-btn');
+  if (!btn) return;
+  var slug = btn.getAttribute('data-slug');
+  var config = collectForm();
+  if (!config) { alert('아직 설정을 못 불러왔습니다. 새로고침 후 다시 시도해주세요.'); return; }
+
+  // [2026-08-30 추가] 이 버튼도 저장(전체 저장)/롤오버(active-del-btn)와
+  // 똑같이 contracts.json을 덮어쓰고 실제 파일을 재생성하는 조작인데
+  // 확인창이 빠져있었다 - 통일성 있게 추가.
+  var n = config.instruments[slug].next;
+  if (!confirm(slug + ' 종목의 다음월물(' + (n ? n.label + ' ' + n.monthLabel : '') + ') 파일을 생성합니다.\n지금 화면의 값으로 contracts.json도 같이 저장됩니다. 계속할까요?')) return;
+
+  var logBox = document.querySelector('.slug-log[data-slug-log="' + slug + '"]');
+  logBox.style.display = 'block';
+  logBox.textContent = '저장 중...';
+  btn.disabled = true;
+
+  fetch(API.config, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(config),
+  }).then(function(r){
+    return r.json().then(function(body){ return { ok: r.ok, body: body }; });
+  }).then(function(res){
+    if (!res.ok) throw new Error(res.body.error || '저장 실패');
+    currentConfig = config;
+    logBox.textContent += '\n저장 완료. ' + slug + ' 종목의 다음월물 파일만 재생성합니다...';
+    return fetch(API.generate, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slug: slug }),
+    });
+  }).then(function(r){
+    return r.json().then(function(body){ return { ok: r.ok, body: body }; });
+  }).then(function(res){
+    logBox.textContent += '\n' + (res.body.log || '');
+    if (res.ok) {
+      logBox.textContent += '\n★ ' + slug + ' 종목 생성 완료';
+      renderFileList(res.body.files);
+    } else {
+      logBox.textContent += '\n!! 생성 실패';
+    }
+  }).catch(function(e){
+    logBox.textContent += '\n오류: ' + e.message;
+  }).finally(function(){
+    btn.disabled = false;
+  });
+});
+
+// [2026-08-30 수정][단순 삭제 -> 다음월물 교체로 변경, 복원 지원 추가]
+// "지우면 활성이 공란이 되고 사람이 또 next를 새로 채워야 하는" 흐름
+// 대신, 지금의 next(다음월물)를 그대로 새 active로 승격시키고, 새
+// next는 그 승격된 월물 기준으로 자동계산해서 채운다. 교체 직전의
+// active/next는 previousActive/previousNext에 1단계만 보관해서
+// "이전월물 복원" 버튼으로 되돌릴 수 있게 한다(실수로 교체했을 때
+// 대비 - 계속 여러 단계 되돌릴 수 있는 건 아니고 딱 한 번 전만).
+document.getElementById('instruments').addEventListener('click', function(ev){
+  var btn = ev.target.closest('.active-del-btn');
+  if (!btn) return;
+  var slug = btn.getAttribute('data-slug');
+  var inst = currentConfig.instruments[slug];
+  if (!inst.next || !inst.next.code) { alert('다음월물 정보가 비어있어 교체할 수 없습니다. 먼저 오른쪽 종목코드를 채워주세요.'); return; }
+
+  var promoted = inst.next; // 이게 새 active가 됨
+  var newNextLabel = nextLabelInCycle(slug, promoted.label);
+  var newNext = newNextLabel ? {
+    code: codeWithNewLabel(promoted.code, promoted.label, newNextLabel),
+    label: newNextLabel,
+    monthLabel: monthLabelForLetter(newNextLabel[0]),
+    lastTradingDay: estimateLastTradingDay(slug, newNextLabel), // 대략치 - 계속 직접 수정 가능
+    nameEn: inst.nameEnDefault + '_' + newNextLabel,
+  } : { code: '', label: '', monthLabel: '', lastTradingDay: '', nameEn: '' };
+
+  var confirmMsg = slug + ': 지금의 활성월물(' + (inst.active ? inst.active.label + ' ' + inst.active.monthLabel : '없음') + ')을 ' +
+    '다음월물(' + promoted.label + ' ' + promoted.monthLabel + ')로 교체합니다.\n' +
+    '새 다음월물은 ' + (newNextLabel ? (newNext.label + ' ' + newNext.monthLabel + '(만기일 대략추정 ' + newNext.lastTradingDay + ' - 정확치 아니니 확인 필요)') : '자동계산 불가 - 직접 입력') + '로 채워집니다.\n' +
+    '(직전 값은 "이전월물 복원" 버튼으로 한 번 되돌릴 수 있습니다.)\n' +
+    '대시보드 상단 월물정보도 즉시 이 값으로 바뀝니다. 계속할까요?';
+  if (!confirm(confirmMsg)) return;
+
+  var config = JSON.parse(JSON.stringify(currentConfig));
+  config.instruments[slug].previousActive = inst.active ? JSON.parse(JSON.stringify(inst.active)) : null;
+  config.instruments[slug].previousNext = JSON.parse(JSON.stringify(inst.next));
+  config.instruments[slug].active = promoted;
+  config.instruments[slug].next = newNext;
+
+  btn.disabled = true;
+  btn.textContent = '교체 중...';
+  fetch(API.config, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(config),
+  }).then(function(r){
+    return r.json().then(function(body){ return { ok: r.ok, body: body }; });
+  }).then(function(res){
+    if (!res.ok) throw new Error(res.body.error || '저장 실패');
+    currentConfig = config;
+    renderForm(config);
+  }).catch(function(e){
+    alert('교체 실패: ' + e.message);
+    btn.disabled = false;
+    btn.textContent = '다음월물 교체';
+  });
+});
+
+// [2026-08-30 신규][이전월물 복원] 방금 "다음월물 교체"로 저장해둔
+// previousActive/previousNext가 있을 때만 눌려서(없으면 버튼 자체가
+// disabled), 그 값으로 active/next를 되돌리고 기록은 비운다(1단계
+// undo라 두 번 연속 복원은 안 됨 - 되돌린 뒤엔 다시 교체해야 새
+// 기록이 생김).
+document.getElementById('instruments').addEventListener('click', function(ev){
+  var btn = ev.target.closest('.active-restore-btn');
+  if (!btn || btn.disabled) return;
+  var slug = btn.getAttribute('data-slug');
+  var inst = currentConfig.instruments[slug];
+  if (!inst.previousActive && !inst.previousNext) return;
+
+  var confirmMsg = slug + ': 교체 직전 값으로 되돌립니다.\n' +
+    '활성월물 -> ' + (inst.previousActive ? inst.previousActive.label + ' ' + inst.previousActive.monthLabel : '없음') + '\n' +
+    '다음월물 -> ' + (inst.previousNext ? inst.previousNext.label + ' ' + inst.previousNext.monthLabel : '없음') + '\n' +
+    '대시보드 상단 월물정보도 즉시 이 값으로 바뀝니다. 계속할까요?';
+  if (!confirm(confirmMsg)) return;
+
+  var config = JSON.parse(JSON.stringify(currentConfig));
+  config.instruments[slug].active = inst.previousActive || null;
+  config.instruments[slug].next = inst.previousNext;
+  config.instruments[slug].previousActive = null;
+  config.instruments[slug].previousNext = null;
+
+  btn.disabled = true;
+  btn.textContent = '복원 중...';
+  fetch(API.config, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(config),
+  }).then(function(r){
+    return r.json().then(function(body){ return { ok: r.ok, body: body }; });
+  }).then(function(res){
+    if (!res.ok) throw new Error(res.body.error || '저장 실패');
+    currentConfig = config;
+    renderForm(config);
+  }).catch(function(e){
+    alert('복원 실패: ' + e.message);
+    btn.disabled = false;
+    btn.textContent = '이전월물 복원';
+  });
+});
+
+document.getElementById('btnReload').addEventListener('click', function(){
+  clearLog();
+  loadConfig();
+});
+
+function renderFileList(files){
+  var box = document.getElementById('fileList');
+  box.innerHTML = '생성된 파일 (' + files.length + '개): ';
+  files.forEach(function(f){
+    box.appendChild(el('span', { class: 'f', text: f }));
+  });
+}
+
+function doShutdown(useBeacon){
+  if (useBeacon && navigator.sendBeacon) {
+    navigator.sendBeacon(API.shutdown);
+  } else {
+    fetch(API.shutdown, { method: 'POST', keepalive: true }).catch(function(){});
+  }
+}
+
+document.getElementById('btnShutdown').addEventListener('click', function(){
+  if (!confirm('창을 닫으시겠습니까? (서버 프로세스도 함께 종료됩니다)')) return;
+  var btn = this;
+  btn.disabled = true; btn.textContent = '종료 중...';
+  doShutdown(false);
+  appendLog('서버 종료 신호를 보냈습니다. 창을 자동으로 닫습니다...', 'ok-line');
+  // [2026-08-10 수정][대시보드의 검증된 종료 패턴과 통일] window.close()는
+  // 브라우저 보안정책상 "스크립트가 직접 연 창/탭"이 아니면 대부분
+  // 무시됩니다(이 페이지는 webbrowser.open()으로 열린 일반 탭이라 실제로
+  // 안 닫힐 가능성이 높음). 대시보드(yesspot_signals_dashboard.html)의
+  // 종료 버튼과 동일하게, 닫기를 시도한 뒤 document.hidden으로 "정말
+  // 닫혔는지"를 확인해서 - 실패했을 때만 안내를 띄웁니다(성공했으면 탭
+  // 자체가 사라지므로 이 코드가 실행될 일도 없음).
+  setTimeout(function(){
+    window.close();
+    setTimeout(function(){
+      if (!document.hidden) {
+        alert('종료 신호를 보냈습니다.\n브라우저 보안 정책상 이 탭은 자동으로 안 닫힐 수 있습니다 - 이제 직접 닫으셔도 됩니다.\n(서버는 이미 종료됐습니다)');
+      }
+    }, 300);
+  }, 400);
+});
+
+// [핵심 요구사항] 페이지(탭)를 닫으면 서버도 자동으로 같이 종료됩니다.
+// beforeunload 시점엔 일반 fetch가 취소될 수 있어 sendBeacon을 씀 -
+// 브라우저가 페이지를 떠나도 이 요청만은 별도로 보장해서 보내줍니다.
+window.addEventListener('beforeunload', function(){
+  doShutdown(true);
+});
+
+loadConfig();
+
+})();
+</script>
+</body>
+</html>

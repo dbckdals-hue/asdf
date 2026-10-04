@@ -1,0 +1,109 @@
+{
+  "_설명": "종목별 현재/다음 월물 설정. 새 월물로 넘어갈 때는 이 파일만 고치고 generate_signal_files.py를 다시 돌리면 signal_*.js 전부가 자동으로 재생성됩니다. 코드/만기는 반드시 실제 예스스팟과 거래소 캘린더로 재확인 후 채워넣으세요 (여기 채워진 값은 검색으로 확인한 추정치입니다).",
+  "instruments": {
+    "nasdaq100": {
+      "nameKr": "나스닥100",
+      "nameEnDefault": "NASDAQ100",
+      "exchangeTimezoneNote": "시카고(CME) 현지시각 기준",
+      "active": {
+        "code": "NQZ26",
+        "label": "Z26",
+        "monthLabel": "12월물",
+        "lastTradingDay": "2026-12-18",
+        "nameEn": "NASDAQ100_Z26"
+      },
+      "next": {
+        "code": "NQH27",
+        "label": "H27",
+        "monthLabel": "3월물",
+        "lastTradingDay": "2027-03-19",
+        "nameEn": "NASDAQ100_H27"
+      },
+      "previousActive": {
+        "code": "NQU26",
+        "label": "U26",
+        "monthLabel": "9월물",
+        "lastTradingDay": "2026-09-18",
+        "nameEn": "NASDAQ100_U26"
+      },
+      "previousNext": {
+        "code": "NQZ26",
+        "label": "Z26",
+        "monthLabel": "12월물",
+        "lastTradingDay": "2026-12-18",
+        "nameEn": "NASDAQ100_Z26"
+      }
+    },
+    "sp500": {
+      "nameKr": "S&P500",
+      "nameEnDefault": "SP500",
+      "exchangeTimezoneNote": "시카고(CME) 현지시각 기준",
+      "active": {
+        "code": "ESZ26",
+        "label": "Z26",
+        "monthLabel": "12월물",
+        "lastTradingDay": "2026-12-18",
+        "nameEn": "SP500_Z26"
+      },
+      "next": {
+        "code": "ESH27",
+        "label": "H27",
+        "monthLabel": "3월물",
+        "lastTradingDay": "2027-03-19",
+        "nameEn": "SP500_H27"
+      },
+      "previousActive": {
+        "code": "ESU26",
+        "label": "U26",
+        "monthLabel": "9월물",
+        "lastTradingDay": "2026-09-18",
+        "nameEn": "SP500_U26"
+      },
+      "previousNext": {
+        "code": "ESZ26",
+        "label": "Z26",
+        "monthLabel": "12월물",
+        "lastTradingDay": "2026-12-18",
+        "nameEn": "SP500_Z26"
+      }
+    },
+    "gold": {
+      "nameKr": "금선물",
+      "nameEnDefault": "GOLD",
+      "exchangeTimezoneNote": "뉴욕(COMEX) 현지시각 기준",
+      "active": {
+        "code": "GCZ26",
+        "label": "Z26",
+        "monthLabel": "12월물",
+        "lastTradingDay": "2026-12-18",
+        "nameEn": "GOLD_Z26"
+      },
+      "next": {
+        "code": "GCG27",
+        "label": "G27",
+        "monthLabel": "2월물",
+        "lastTradingDay": "2027-02-24",
+        "nameEn": "GOLD_G27"
+      }
+    },
+    "crudeoil": {
+      "nameKr": "크루드오일",
+      "nameEnDefault": "CRUDEOIL",
+      "exchangeTimezoneNote": "뉴욕(NYMEX) 현지시각 기준",
+      "active": {
+        "code": "CLZ26",
+        "label": "Z26",
+        "monthLabel": "12월물",
+        "lastTradingDay": "2026-11-20",
+        "nameEn": "CRUDEOIL_Z26"
+      },
+      "next": {
+        "code": "CLF27",
+        "label": "F27",
+        "monthLabel": "1월물",
+        "lastTradingDay": "2026-12-22",
+        "nameEn": "CRUDEOIL_F27"
+      }
+    }
+  }
+}
