@@ -91,18 +91,18 @@
       "nameEnDefault": "CRUDEOIL",
       "exchangeTimezoneNote": "뉴욕(NYMEX) 현지시각 기준",
       "active": {
+        "code": "CLX26",
+        "label": "X26",
+        "monthLabel": "11월물",
+        "lastTradingDay": "2026-10-20",
+        "nameEn": "CRUDEOIL_X26"
+      },
+      "next": {
         "code": "CLZ26",
         "label": "Z26",
         "monthLabel": "12월물",
         "lastTradingDay": "2026-11-20",
         "nameEn": "CRUDEOIL_Z26"
-      },
-      "next": {
-        "code": "CLF27",
-        "label": "F27",
-        "monthLabel": "1월물",
-        "lastTradingDay": "2026-12-22",
-        "nameEn": "CRUDEOIL_F27"
       }
     }
   }
